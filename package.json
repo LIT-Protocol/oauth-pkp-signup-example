@@ -3,9 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "dependencies": {
+    "@react-oauth/google": "^0.4.0",
     "@testing-library/jest-dom": "^5.16.5",
     "@testing-library/react": "^13.4.0",
     "@testing-library/user-event": "^13.5.0",
+    "ethers": "^5.7.2",
+    "js-base64": "^3.7.2",
+    "lit-js-sdk": "^1.1.234",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-scripts": "5.0.1",
@@ -13,9 +17,10 @@
   },
   "scripts": {
     "start": "react-scripts start",
-    "build": "react-scripts build",
+    "build": "yarn fetchContracts && react-scripts build",
     "test": "react-scripts test",
-    "eject": "react-scripts eject"
+    "eject": "react-scripts eject",
+    "fetchContracts": "node ./tools/getDeployedContracts.mjs"
   },
   "eslintConfig": {
     "extends": [

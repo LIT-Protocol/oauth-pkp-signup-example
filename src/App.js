@@ -3,6 +3,7 @@ import "./App.css";
 import { GoogleLogin } from "@react-oauth/google";
 import { ethers } from "ethers";
 import { Base64 } from "js-base64";
+import LitJsSdk from "lit-js-sdk";
 
 import PKPHelper from "./abis/PKPHelper.json";
 import PKPNFT from "./abis/PKPNFT.json";
@@ -61,11 +62,27 @@ function App() {
     console.log("mintingReceipt: ", mintingReceipt);
     const tokenIdFromEvent = mintingReceipt.events[2].topics[3];
     const ethAddress = await pkpContract.getEthAddress(tokenIdFromEvent);
-    console.log("minted PKP with eth address: ", ethAddress);
     setPkpEthAddress(ethAddress);
 
+    console.log("minted PKP with eth address: ", ethAddress);
+    const pkpPublicKey = await pkpContract.getPubkey(tokenIdFromEvent);
+
     // get the user a session with it
-    const fakeSessionKey = "0x1234567890";
+    const litNodeClient = new LitJsSdk.LitNodeClient();
+    await litNodeClient.connect();
+
+    const fakeSessionKey = "lit:session:0x1234567890";
+    const sessionSig = await litNodeClient.signSessionKey({
+      sessionKey: fakeSessionKey,
+      authMethods: [
+        {
+          authMethodType: 6,
+          accessToken: credentialResponse.credential,
+        },
+      ],
+      pkpPublicKey,
+    });
+    console.log("sessionSig: ", sessionSig);
   };
   return (
     <div className="App">

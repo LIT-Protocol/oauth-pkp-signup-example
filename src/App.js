@@ -81,6 +81,7 @@ function App() {
     console.log("minted PKP with eth address: ", ethAddress);
     const pkpPublicKey = await pkpContract.getPubkey(tokenIdFromEvent);
     setPkpPublicKey(pkpPublicKey);
+    setStatus("Minted PKP");
   };
 
   const handleEncryptThenDecrypt = async () => {
@@ -127,7 +128,7 @@ function App() {
     };
 
     // get the user a session with it
-    const litNodeClient = new LitJsSdk.LitNodeClient();
+    const litNodeClient = new LitJsSdk.LitNodeClient({ litNetwork: "serrano" });
     await litNodeClient.connect();
 
     const sessionSigs = await litNodeClient.getSessionSigs({

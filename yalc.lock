@@ -1,9 +1,0 @@
-{
-  "version": "v1",
-  "packages": {
-    "lit-js-sdk": {
-      "signature": "c71561d0d1f9e965d7937ed22756007f",
-      "file": true
-    }
-  }
-}

@@ -9,7 +9,7 @@
     "@testing-library/user-event": "^13.5.0",
     "ethers": "^5.7.2",
     "js-base64": "^3.7.2",
-    "lit-js-sdk": "file:.yalc/lit-js-sdk",
+    "lit-js-sdk": "^1.2.31",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-scripts": "5.0.1",

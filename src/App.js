@@ -9,11 +9,25 @@ import PKPHelper from "./abis/PKPHelper.json";
 import PKPNFT from "./abis/PKPNFT.json";
 import ContractAddresses from "./abis/deployed-contracts.json";
 
+window.LitJsSdk = LitJsSdk;
+window.ethers = ethers;
+
 function App() {
   const [pkpEthAddress, setPkpEthAddress] = useState(null);
+  const [googleCredentialResponse, setGoogleCredentialResponse] =
+    useState(null);
+  const [pkpPublicKey, setPkpPublicKey] = useState(null);
+  const [status, setStatus] = useState("");
 
   const handleLoggedInToGoogle = async (credentialResponse) => {
+    setStatus("Logged in to Google");
     console.log("got this response from google sign in: ", credentialResponse);
+    setGoogleCredentialResponse(credentialResponse);
+    mintPkp(credentialResponse);
+  };
+
+  const mintPkp = async (credentialResponse) => {
+    setStatus("Minting PKP...");
     // mint a PKP for the user
     // A Web3Provider wraps a standard Web3 provider, which is
     // what MetaMask injects as window.ethereum into each page
@@ -66,26 +80,106 @@ function App() {
 
     console.log("minted PKP with eth address: ", ethAddress);
     const pkpPublicKey = await pkpContract.getPubkey(tokenIdFromEvent);
+    setPkpPublicKey(pkpPublicKey);
+  };
+
+  const handleEncryptThenDecrypt = async () => {
+    setStatus("Encrypting then decrypting...");
+    var unifiedAccessControlConditions = [
+      {
+        conditionType: "evmBasic",
+        contractAddress: "",
+        standardContractType: "",
+        chain: "ethereum",
+        method: "eth_getBalance",
+        parameters: [":userAddress", "latest"],
+        returnValueTest: {
+          comparator: ">=",
+          value: "0",
+        },
+      },
+    ];
+
+    // this will be fired if auth is needed. we can use this to prompt the user to sign in
+    const authNeededCallback = async ({
+      chain,
+      resources,
+      expiration,
+      uri,
+      litNodeClient,
+    }) => {
+      console.log("authNeededCallback fired");
+      const sessionSig = await litNodeClient.signSessionKey({
+        sessionKey: uri,
+        authMethods: [
+          {
+            authMethodType: 6,
+            accessToken: googleCredentialResponse.credential,
+          },
+        ],
+        pkpPublicKey,
+        expiration,
+        resources,
+        chain,
+      });
+      console.log("got session sig from node and PKP: ", sessionSig);
+      return sessionSig;
+    };
 
     // get the user a session with it
     const litNodeClient = new LitJsSdk.LitNodeClient();
     await litNodeClient.connect();
 
-    const fakeSessionKey = "lit:session:0x1234567890";
-    const sessionSig = await litNodeClient.signSessionKey({
-      sessionKey: fakeSessionKey,
-      authMethods: [
-        {
-          authMethodType: 6,
-          accessToken: credentialResponse.credential,
-        },
-      ],
-      pkpPublicKey,
+    const sessionSigs = await litNodeClient.getSessionSigs({
+      expiration: new Date(Date.now() + 1000 * 60 * 60 * 24).toISOString(), // 24 hours
+      chain: "ethereum",
+      resources: [`litEncryptionCondition://*`],
+      switchChain: false,
+      authNeededCallback,
     });
-    console.log("sessionSig: ", sessionSig);
+    console.log("sessionSigs before saving encryption key: ", sessionSigs);
+
+    const { encryptedZip, symmetricKey } = await LitJsSdk.zipAndEncryptString(
+      "this is a secret message"
+    );
+
+    const encryptedSymmetricKey = await litNodeClient.saveEncryptionKey({
+      unifiedAccessControlConditions,
+      symmetricKey,
+      sessionSigs,
+    });
+
+    const hashOfKey = await LitJsSdk.hashEncryptionKey({
+      encryptedSymmetricKey,
+    });
+
+    console.log("encrypted symmetric key", encryptedSymmetricKey);
+
+    const retrievedSymmKey = await litNodeClient.getEncryptionKey({
+      unifiedAccessControlConditions,
+      toDecrypt: LitJsSdk.uint8arrayToString(encryptedSymmetricKey, "base16"),
+      sessionSigs,
+    });
+
+    const decryptedFiles = await LitJsSdk.decryptZip(
+      encryptedZip,
+      retrievedSymmKey
+    );
+    const decryptedString = await decryptedFiles["string.txt"].async("text");
+    console.log("decrypted string", decryptedString);
+
+    setStatus("Success!");
   };
+
   return (
     <div className="App">
+      <div style={{ height: 50 }} />
+      <h1>{status}</h1>
+      <div style={{ height: 100 }} />
+      <h3>
+        Step 1: log in with Google. You will mint a PKP and obtain a session
+        sig.
+      </h3>
       <GoogleLogin
         onSuccess={handleLoggedInToGoogle}
         onError={() => {
@@ -95,6 +189,11 @@ function App() {
       />
       <div style={{ height: 100 }} />
       {pkpEthAddress && <div>PKP Eth Address: {pkpEthAddress}</div>}
+      <div style={{ height: 100 }} />
+      <h3>Step 2: Use Lit</h3>
+      <button onClick={handleEncryptThenDecrypt}>
+        Encrypt then Decrypt with Lit
+      </button>
     </div>
   );
 }

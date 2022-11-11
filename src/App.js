@@ -91,12 +91,12 @@ function App() {
         conditionType: "evmBasic",
         contractAddress: "",
         standardContractType: "",
-        chain: "ethereum",
-        method: "eth_getBalance",
-        parameters: [":userAddress", "latest"],
+        chain: "mumbai",
+        method: "",
+        parameters: [":userAddress"],
         returnValueTest: {
-          comparator: ">=",
-          value: "0",
+          comparator: "=",
+          value: pkpEthAddress,
         },
       },
     ];
@@ -179,7 +179,7 @@ function App() {
       <div style={{ height: 100 }} />
       <h3>
         Step 1: log in with Google. You will mint a PKP and obtain a session
-        sig.
+        sig. Note: Your metamask must be switched to Mumbai.
       </h3>
       <GoogleLogin
         onSuccess={handleLoggedInToGoogle}

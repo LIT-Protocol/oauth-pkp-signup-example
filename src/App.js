@@ -55,7 +55,7 @@ function App() {
     let jwtParts = credentialResponse.credential.split(".");
     let jwtPayload = JSON.parse(Base64.decode(jwtParts[1]));
 
-    let idForAuthMethod = ethers.utils.hexlify(
+    let idForAuthMethod = ethers.utils.keccak256(
       ethers.utils.toUtf8Bytes(`${jwtPayload.sub}:${jwtPayload.aud}`)
     );
 
@@ -128,7 +128,9 @@ function App() {
     };
 
     // get the user a session with it
-    const litNodeClient = new LitJsSdk.LitNodeClient({ litNetwork: "serrano" });
+    const litNodeClient = new LitJsSdk.LitNodeClient({
+      litNetwork: "serrano",
+    });
     await litNodeClient.connect();
 
     const sessionSigs = await litNodeClient.getSessionSigs({

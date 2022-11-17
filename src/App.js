@@ -1,7 +1,7 @@
 import { useState } from "react";
 import "./App.css";
 import { GoogleLogin } from "@react-oauth/google";
-import { ethers } from "ethers";
+import { ethers, utils } from "ethers";
 import { Base64 } from "js-base64";
 import LitJsSdk from "lit-js-sdk";
 
@@ -11,6 +11,8 @@ import ContractAddresses from "./abis/deployed-contracts.json";
 
 window.LitJsSdk = LitJsSdk;
 window.ethers = ethers;
+
+const RELAY_API_URL = process.env.RELAY_API_URL || 'http://localhost:3001';
 
 function App() {
   const [pkpEthAddress, setPkpEthAddress] = useState(null);
@@ -83,6 +85,117 @@ function App() {
     setPkpPublicKey(pkpPublicKey);
     setStatus("Minted PKP");
   };
+
+  const handleStoreEncryptionCondition = async () => {
+    setStatus("Storing encryption condition...");
+    var unifiedAccessControlConditions = [
+      {
+        conditionType: "evmBasic",
+        contractAddress: "",
+        standardContractType: "",
+        chain: "mumbai",
+        method: "",
+        parameters: [":userAddress"],
+        returnValueTest: {
+          comparator: "=",
+          value: pkpEthAddress,
+        },
+      },
+    ];
+
+    // this will be fired if auth is needed. we can use this to prompt the user to sign in
+    const authNeededCallback = async ({
+      chain,
+      resources,
+      expiration,
+      uri,
+      litNodeClient,
+    }) => {
+      console.log("authNeededCallback fired");
+      const sessionSig = await litNodeClient.signSessionKey({
+        sessionKey: uri,
+        authMethods: [
+          {
+            authMethodType: 6,
+            accessToken: googleCredentialResponse.credential,
+          },
+        ],
+        pkpPublicKey,
+        expiration,
+        resources,
+        chain,
+      });
+      console.log("got session sig from node and PKP: ", sessionSig);
+      return sessionSig;
+    };
+
+    // get the user a session with it
+    const litNodeClient = new LitJsSdk.LitNodeClient({
+      litNetwork: "serrano",
+    });
+    await litNodeClient.connect();
+
+    const sessionSigs = await litNodeClient.getSessionSigs({
+      expiration: new Date(Date.now() + 1000 * 60 * 60 * 24).toISOString(), // 24 hours
+      chain: "ethereum",
+      resources: [`litEncryptionCondition://*`],
+      sessionCapabilityObject: {
+        def: ["litEncryptionCondition"]
+      },
+      switchChain: false,
+      authNeededCallback,
+    });
+    console.log("sessionSigs before saving encryption key: ", sessionSigs);
+
+    const { encryptedZip, symmetricKey } = await LitJsSdk.zipAndEncryptString(
+      "this is a secret message"
+    );
+
+    // value parameter - hash unified conditions
+    const hashedAccessControlConditions = await LitJsSdk.hashUnifiedAccessControlConditions(unifiedAccessControlConditions);
+    console.log("hashedAccessControlConditions", { hashedAccessControlConditions });
+    const hashedAccessControlConditionsStr = LitJsSdk.uint8arrayToString(new Uint8Array(hashedAccessControlConditions), "base16");
+
+    // key parameter - encrypt symmetric key then hash it 
+    const encryptedSymmetricKey = LitJsSdk.encryptWithBlsPubkey({
+      pubkey: litNodeClient.networkPubKey,
+      data: symmetricKey,
+    });
+    const hashedEncryptedSymmetricKeyStr = await LitJsSdk.hashEncryptionKey({ encryptedSymmetricKey });
+    
+    // securityHash parameter - encrypt symmetric key, concat with creator address
+    const pkpEthAddressBytes = utils.arrayify(pkpEthAddress);
+    const securityHashPreimage = new Uint8Array([...encryptedSymmetricKey, ...pkpEthAddressBytes]);
+    // TODO: LitJsSdk.hashEncryptionKey ought to be renamed to just .hashBytes
+    const securityHashStr = await LitJsSdk.hashEncryptionKey({ encryptedSymmetricKey: securityHashPreimage });
+
+    console.log("Storing encryption condition with relay", {
+      hashedEncryptedSymmetricKeyStr,
+      hashedAccessControlConditionsStr,
+      securityHashStr,
+      sessionSig: sessionSigs["https://serrano.litgateway.com:7370"],
+    });
+
+    // call centralized conditions relayer to write encryption conditions to chain.
+    const storeRes = await fetch(`${RELAY_API_URL}/store-condition`, {
+      method: "POST",
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        key: hashedEncryptedSymmetricKeyStr,
+        value: hashedAccessControlConditionsStr,
+        securityHash: securityHashStr,
+        chainId: "1",
+        permanent: false,
+        capabilityProtocolPrefix: "litEncryptionCondition",
+        // just choose any one session signature that is generated.
+        sessionSig: sessionSigs["https://serrano.litgateway.com:7370"],
+      }),
+    });
+
+    setStatus("Success!");
+  }
 
   const handleEncryptThenDecrypt = async () => {
     setStatus("Encrypting then decrypting...");
@@ -194,8 +307,8 @@ function App() {
       {pkpEthAddress && <div>PKP Eth Address: {pkpEthAddress}</div>}
       <div style={{ height: 100 }} />
       <h3>Step 2: Use Lit</h3>
-      <button onClick={handleEncryptThenDecrypt}>
-        Encrypt then Decrypt with Lit
+      <button onClick={handleStoreEncryptionCondition}>
+        Encrypt with Lit
       </button>
     </div>
   );

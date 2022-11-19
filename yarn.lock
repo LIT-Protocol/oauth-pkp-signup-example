@@ -6884,10 +6884,10 @@ lit-connect-modal@^0.1.10:
   dependencies:
     micromodal "^0.4.10"
 
-lit-js-sdk@^1.2.32:
-  version "1.2.32"
-  resolved "https://registry.yarnpkg.com/lit-js-sdk/-/lit-js-sdk-1.2.32.tgz#334f26d5051acb6953b2e803860516859d19b78e"
-  integrity sha512-UHM6J6sa+06EMMpjZkDtZ3hAQM4756m/ckRp3hSrmTMr5Qc3meISvlnPaH/BAPdwDdrgUMqmY+c1um4T+g7JCw==
+lit-js-sdk@^1.2.37:
+  version "1.2.37"
+  resolved "https://registry.yarnpkg.com/lit-js-sdk/-/lit-js-sdk-1.2.37.tgz#14c98aa9988007b3dd86a2d45f0c7d52f7c33e66"
+  integrity sha512-d/GC2H7sq796AqU3BmSEMYxL1yYV8KujzPC47quv03QqCDgOMDuY9QtXjjGLpJRD0XS2CKpoGjIRreYNuFMBog==
   dependencies:
     "@ethersproject/bytes" "^5.5.0"
     "@ethersproject/contracts" "^5.2.0"
@@ -6900,6 +6900,7 @@ lit-js-sdk@^1.2.32:
     buffer "^6.0.3"
     bufferutil "^4.0.6"
     cross-blob "^3.0.1"
+    js-base64 "^3.7.2"
     jszip "^3.6.0"
     lit-connect-modal "^0.1.10"
     lit-siwe "^1.1.8"

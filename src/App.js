@@ -1,13 +1,8 @@
-import { useState } from "react";
-import "./App.css";
 import { GoogleLogin } from "@react-oauth/google";
 import { ethers, utils } from "ethers";
-import { Base64 } from "js-base64";
 import LitJsSdk from "lit-js-sdk";
-
-import PKPHelper from "./abis/PKPHelper.json";
-import PKPNFT from "./abis/PKPNFT.json";
-import ContractAddresses from "./abis/deployed-contracts.json";
+import { useState } from "react";
+import "./App.css";
 
 window.LitJsSdk = LitJsSdk;
 window.ethers = ethers;
@@ -23,68 +18,77 @@ function App() {
 
   const handleLoggedInToGoogle = async (credentialResponse) => {
     setStatus("Logged in to Google");
-    console.log("got this response from google sign in: ", credentialResponse);
+    console.log("Got response from google sign in: ", { credentialResponse });
     setGoogleCredentialResponse(credentialResponse);
-    mintPkp(credentialResponse);
+    const requestId = await mintPkpWithRelayer(credentialResponse);
+    await pollRequestUntilTerminalState(requestId);
   };
 
-  const mintPkp = async (credentialResponse) => {
-    setStatus("Minting PKP...");
-    // mint a PKP for the user
-    // A Web3Provider wraps a standard Web3 provider, which is
-    // what MetaMask injects as window.ethereum into each page
-    const provider = new ethers.providers.Web3Provider(window.ethereum);
+  const mintPkpWithRelayer = async (credentialResponse) => {
+    setStatus("Minting PKP with relayer...");
 
-    // MetaMask requires requesting permission to connect users accounts
-    await provider.send("eth_requestAccounts", []);
+    const mintRes = await fetch(`${RELAY_API_URL}/auth/google`, {
+      method: "POST",
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        idToken: credentialResponse.credential
+      }),
+    });
 
-    // The MetaMask plugin also allows signing transactions to
-    // send ether and pay to change state within the blockchain.
-    // For this, you need the account signer...
-    const signer = provider.getSigner();
+    if (mintRes.status < 200 || mintRes.status >= 400) {
+      console.warn("Something wrong with the API call", await mintRes.json());
+      setStatus("Uh oh, something's not quite right.");
+      return null;
+    } else {
+      const resBody = await mintRes.json();
+      console.log("Response OK", { body: resBody });
+      setStatus("Successfully initiated minting PKP with relayer.")
+      return resBody.requestId;
+    }
+  }
 
-    const helperContract = new ethers.Contract(
-      ContractAddresses.pkpHelperContractAddress,
-      PKPHelper.abi,
-      signer
-    );
-    const pkpContract = new ethers.Contract(
-      ContractAddresses.pkpNftContractAddress,
-      PKPNFT.abi,
-      signer
-    );
+  const pollRequestUntilTerminalState = async (requestId) => {
+    if (!requestId) {
+      return;
+    }
 
-    let jwtParts = credentialResponse.credential.split(".");
-    let jwtPayload = JSON.parse(Base64.decode(jwtParts[1]));
+    const maxPollCount = 20;
+    for (let i = 0; i < maxPollCount; i++) {
+      setStatus(`Waiting for auth completion (poll #${i+1})`);
+      const getAuthStatusRes = await fetch(`${RELAY_API_URL}/auth/status/${requestId}`);
 
-    let idForAuthMethod = ethers.utils.keccak256(
-      ethers.utils.toUtf8Bytes(`${jwtPayload.sub}:${jwtPayload.aud}`)
-    );
+      if (getAuthStatusRes.status < 200 || getAuthStatusRes.status >= 400) {
+        console.warn("Something wrong with the API call", await getAuthStatusRes.json());
+        setStatus("Uh oh, something's not quite right.");
+        return;
+      }
 
-    const mintCost = await pkpContract.mintCost();
+      const resBody = await getAuthStatusRes.json();
+      console.log("Response OK", { body: resBody });
 
-    const mintTx = await helperContract.mintNextAndAddAuthMethods(
-      2, // keyType
-      [6], // permittedAuthMethodTypes,
-      [idForAuthMethod], // permittedAuthMethodIds
-      ["0x"], // permittedAuthMethodPubkeys
-      [[ethers.BigNumber.from("0")]], // permittedAuthMethodScopes
-      true, // addPkpEthAddressAsPermittedAddress
-      true, // sendPkpToItself
-      { value: mintCost }
-    );
-    console.log("mintTx: ", mintTx);
-    const mintingReceipt = await mintTx.wait();
-    console.log("mintingReceipt: ", mintingReceipt);
-    const tokenIdFromEvent = mintingReceipt.events[2].topics[3];
-    const ethAddress = await pkpContract.getEthAddress(tokenIdFromEvent);
-    setPkpEthAddress(ethAddress);
+      if (resBody.error) {
+        // exit loop since error
+        console.warn("Something wrong with the API call", { error: resBody.error });
+        setStatus("Uh oh, something's not quite right.");
+        return;
+      } else if (resBody.status === "Succeeded") {
+        // exit loop since success
+        console.info("Successfully authed", { ...resBody });
+        setStatus("Successfully authed and minted PKP!");
+        setPkpEthAddress(resBody.pkpEthAddress);
+        setPkpPublicKey(resBody.pkpPublicKey);
+        return;
+      }
 
-    console.log("minted PKP with eth address: ", ethAddress);
-    const pkpPublicKey = await pkpContract.getPubkey(tokenIdFromEvent);
-    setPkpPublicKey(pkpPublicKey);
-    setStatus("Minted PKP");
-  };
+      // otherwise, sleep then continue polling
+      await new Promise(r => setTimeout(r, 15000));
+    }
+
+    // at this point, polling ended and still no success, set failure status
+    setStatus(`Hmm this is taking longer than expected...`)
+  } 
 
   const handleStoreEncryptionCondition = async () => {
     setStatus("Storing encryption condition...");
@@ -194,7 +198,12 @@ function App() {
       }),
     });
 
-    setStatus("Success!");
+    if (storeRes.status < 200 || storeRes.status >= 400) {
+      console.warn("Something wrong with the API call", await storeRes.json());
+      setStatus("Uh oh, something's not quite right");
+    } else {
+      setStatus("Successfully stored encryption condition with relayer!");
+    }
   }
 
   const handleEncryptThenDecrypt = async () => {
@@ -291,10 +300,9 @@ function App() {
     <div className="App">
       <div style={{ height: 50 }} />
       <h1>{status}</h1>
-      <div style={{ height: 100 }} />
+      <div style={{ height: 200 }} />
       <h3>
-        Step 1: log in with Google. You will mint a PKP and obtain a session
-        sig. Note: Your metamask must be switched to Mumbai.
+        Step 1: log in with Google. Upon OAuth success, we will mint a PKP on your behalf.
       </h3>
       <GoogleLogin
         onSuccess={handleLoggedInToGoogle}
@@ -306,7 +314,7 @@ function App() {
       <div style={{ height: 100 }} />
       {pkpEthAddress && <div>PKP Eth Address: {pkpEthAddress}</div>}
       <div style={{ height: 100 }} />
-      <h3>Step 2: Use Lit</h3>
+      <h3>Step 2: Use Lit Network to obtain a session sig before storing a condition.</h3>
       <button onClick={handleStoreEncryptionCondition}>
         Encrypt with Lit
       </button>

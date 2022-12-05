@@ -57,7 +57,7 @@ function App() {
 	return (
 		<div className="App">
 			<div style={{ height: 80 }} />
-			<h1>Welcome To The OAuth PKP Demo!</h1>
+			<h1>Welcome To The PKP Demo!</h1>
 			<div style={{ height: 24 }} />
 			<h3>Choose an authentication method to begin:</h3>
 			<ButtonGroup variant="outlined">

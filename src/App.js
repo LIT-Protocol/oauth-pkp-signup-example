@@ -182,7 +182,7 @@ function App() {
 					</Button>
 					<h3>
 						Step 3: Use Lit Network to obtain a session sig and then
-						store an encryption condition. (TODO)
+						store an encryption condition.
 					</h3>
 					<Button
 						variant="contained"

@@ -7,7 +7,8 @@ import "./App.css";
 window.LitJsSdk = LitJsSdk;
 window.ethers = ethers;
 
-const RELAY_API_URL = process.env.RELAY_API_URL || 'http://localhost:3001';
+const RELAY_API_URL =
+  process.env.REACT_APP_RELAY_API_URL || "http://localhost:3001";
 
 function App() {
   const [pkpEthAddress, setPkpEthAddress] = useState(null);

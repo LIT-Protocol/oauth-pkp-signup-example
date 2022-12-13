@@ -3,7 +3,7 @@ import "./App.css";
 import { GoogleLogin } from "@react-oauth/google";
 import { ethers } from "ethers";
 import { Base64 } from "js-base64";
-import LitJsSdk from "lit-js-sdk";
+import * as LitJsSdk from "@lit-protocol/lit-node-client";
 
 import PKPHelper from "./abis/PKPHelper.json";
 import PKPNFT from "./abis/PKPNFT.json";

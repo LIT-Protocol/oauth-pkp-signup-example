@@ -1,40 +1,53 @@
+import * as LitJsSdk_accessControlConditions from "@lit-protocol/access-control-conditions";
+import * as LitJsSdk_blsSdk from "@lit-protocol/bls-sdk";
+import { AccsDefaultParams } from "@lit-protocol/constants";
+import * as LitJsSdk from "@lit-protocol/lit-node-client";
+import { Button, ButtonGroup } from "@mui/material";
 import { GoogleLogin } from "@react-oauth/google";
-import { ethers, utils } from "ethers";
-import LitJsSdk from "lit-js-sdk";
+import {
+	startAuthentication,
+	startRegistration,
+} from "@simplewebauthn/browser";
+import base64url from "base64url";
+import { utils } from "ethers";
+import { hexlify } from "ethers/lib/utils";
 import { useState } from "react";
 import "./App.css";
-import { ButtonGroup, Button } from "@mui/material";
-import base64url from "base64url";
-import {
-	startRegistration,
-	startAuthentication,
-} from "@simplewebauthn/browser";
-import { parseAuthenticatorData } from "./utils/parseAuthenticatorData";
 import { decodeAttestationObject } from "./utils/decodeAttestationObject";
-import { hexlify } from "ethers/lib/utils";
+import { parseAuthenticatorData } from "./utils/parseAuthenticatorData";
 
-window.LitJsSdk = LitJsSdk;
-window.ethers = ethers;
+type CredentialResponse = any;
+
+declare global {
+	interface Window {
+		cbor: any;
+	}
+}
 
 const RELAY_API_URL =
 	process.env.REACT_APP_RELAY_API_URL || "http://localhost:3001";
 
 function App() {
-	const [pkpEthAddress, setPkpEthAddress] = useState(null);
-	const [googleCredentialResponse, setGoogleCredentialResponse] = useState(
-		null
-	);
-	const [pkpPublicKey, setPkpPublicKey] = useState(null);
+	const [pkpEthAddress, setPkpEthAddress] = useState<string>("");
+	const [
+		googleCredentialResponse,
+		setGoogleCredentialResponse,
+	] = useState<CredentialResponse | null>(null);
+	const [pkpPublicKey, setPkpPublicKey] = useState<string>("");
 	const [status, setStatus] = useState("");
 	const [selectedAuthMethod, setSelectedAuthMethod] = useState(6);
 	const [
 		webAuthnCredentialPublicKey,
 		setWebAuthnCredentialPublicKey,
-	] = useState();
-	const [webAuthnSignature, setWebAuthnSignature] = useState();
-	const [webAuthnSignatureBase, setWebAuthnSignatureBase] = useState();
+	] = useState<string>("");
+	const [webAuthnSignature, setWebAuthnSignature] = useState<string>("");
+	const [webAuthnSignatureBase, setWebAuthnSignatureBase] = useState<string>(
+		""
+	);
 
-	const handleLoggedInToGoogle = async credentialResponse => {
+	const handleLoggedInToGoogle = async (
+		credentialResponse: CredentialResponse
+	) => {
 		setStatus("Logged in to Google");
 		console.log("Got response from google sign in: ", {
 			credentialResponse,
@@ -98,8 +111,11 @@ function App() {
 						<div>PKP Eth Address: {pkpEthAddress}</div>
 					)}
 					<h3>
-						Step 2: Use Lit Network to obtain a session sig and then
-						store an encryption condition.
+						<s>
+							Step 2: Use Lit Network to obtain a session sig and
+							then store an encryption condition.
+						</s>
+						(Session Sigs do not work currently.)
 					</h3>
 					<button
 						onClick={() =>
@@ -107,7 +123,11 @@ function App() {
 								setStatus,
 								selectedAuthMethod,
 								googleCredentialResponse,
-								{},
+								{
+									signature: "dummy",
+									signatureBase: "dummy",
+									credentialPublicKey: "dummy",
+								},
 								pkpEthAddress,
 								pkpPublicKey
 							)
@@ -153,7 +173,7 @@ function App() {
 									// set in local state
 									setWebAuthnCredentialPublicKey(
 										hexlify(
-											parsedAuthData.credentialPublicKey
+											parsedAuthData.credentialPublicKey!
 										)
 									);
 								}
@@ -181,8 +201,11 @@ function App() {
 						Authenticate
 					</Button>
 					<h3>
-						Step 3: Use Lit Network to obtain a session sig and then
-						store an encryption condition.
+						<s>
+							Step 3: Use Lit Network to obtain a session sig and
+							then store an encryption condition.
+						</s>
+						(Session Sigs do not work currently.)
 					</h3>
 					<Button
 						variant="contained"
@@ -212,8 +235,8 @@ function App() {
 export default App;
 
 async function mintPkpUsingRelayerGoogleAuthVerificationEndpoint(
-	credentialResponse,
-	setStatusFn
+	credentialResponse: any,
+	setStatusFn: (status: string) => void
 ) {
 	setStatusFn("Minting PKP with relayer...");
 
@@ -240,10 +263,10 @@ async function mintPkpUsingRelayerGoogleAuthVerificationEndpoint(
 }
 
 async function mintPkpUsingRelayerWebAuthnVerificationEndpoint(
-	signature,
-	signatureBase,
-	credentialPublicKey,
-	setStatusFn
+	signature: string,
+	signatureBase: string,
+	credentialPublicKey: string,
+	setStatusFn: (status: string) => void
 ) {
 	setStatusFn("Minting PKP with relayer...");
 
@@ -272,9 +295,15 @@ async function mintPkpUsingRelayerWebAuthnVerificationEndpoint(
 }
 
 async function pollRequestUntilTerminalState(
-	requestId,
-	setStatusFn,
-	onSuccess
+	requestId: string,
+	setStatusFn: (status: string) => void,
+	onSuccess: ({
+		pkpEthAddress,
+		pkpPublicKey,
+	}: {
+		pkpEthAddress: string;
+		pkpPublicKey: string;
+	}) => void
 ) {
 	if (!requestId) {
 		return;
@@ -326,15 +355,19 @@ async function pollRequestUntilTerminalState(
 }
 
 async function handleStoreEncryptionCondition(
-	setStatusFn,
-	selectedAuthMethod,
-	googleCredentialResponse,
-	webAuthnVerificationMaterial,
-	pkpEthAddress,
-	pkpPublicKey
+	setStatusFn: (status: string) => void,
+	selectedAuthMethod: number,
+	googleCredentialResponse: any,
+	webAuthnVerificationMaterial: {
+		signature: string;
+		signatureBase: string;
+		credentialPublicKey: string;
+	},
+	pkpEthAddress: string,
+	pkpPublicKey: string
 ) {
 	setStatusFn("Storing encryption condition...");
-	var unifiedAccessControlConditions = [
+	var unifiedAccessControlConditions: AccsDefaultParams[] = [
 		{
 			conditionType: "evmBasic",
 			contractAddress: "",
@@ -356,7 +389,7 @@ async function handleStoreEncryptionCondition(
 		expiration,
 		uri,
 		litNodeClient,
-	}) => {
+	}: any) => {
 		console.log("authNeededCallback fired");
 		const authMethods =
 			selectedAuthMethod === 6
@@ -396,9 +429,6 @@ async function handleStoreEncryptionCondition(
 		expiration: new Date(Date.now() + 1000 * 60 * 60 * 24).toISOString(), // 24 hours
 		chain: "ethereum",
 		resources: [`litEncryptionCondition://*`],
-		sessionCapabilityObject: {
-			def: ["litEncryptionCondition"],
-		},
 		switchChain: false,
 		authNeededCallback,
 	});
@@ -409,7 +439,7 @@ async function handleStoreEncryptionCondition(
 	);
 
 	// value parameter - hash unified conditions
-	const hashedAccessControlConditions = await LitJsSdk.hashUnifiedAccessControlConditions(
+	const hashedAccessControlConditions = await LitJsSdk_accessControlConditions.hashUnifiedAccessControlConditions(
 		unifiedAccessControlConditions
 	);
 	console.log("hashedAccessControlConditions", {
@@ -421,12 +451,12 @@ async function handleStoreEncryptionCondition(
 	);
 
 	// key parameter - encrypt symmetric key then hash it
-	const encryptedSymmetricKey = LitJsSdk.encryptWithBlsPubkey({
-		pubkey: litNodeClient.networkPubKey,
-		data: symmetricKey,
-	});
-	const hashedEncryptedSymmetricKeyStr = await LitJsSdk.hashEncryptionKey({
-		encryptedSymmetricKey,
+	const encryptedSymmetricKey = LitJsSdk_blsSdk.wasmBlsSdkHelpers.encrypt(
+		LitJsSdk.uint8arrayFromString(litNodeClient.subnetPubKey, "base16"),
+		symmetricKey
+	);
+	const hashedEncryptedSymmetricKeyStr = await hashBytes({
+		bytes: new Uint8Array(encryptedSymmetricKey),
 	});
 
 	// securityHash parameter - encrypt symmetric key, concat with creator address
@@ -435,9 +465,9 @@ async function handleStoreEncryptionCondition(
 		...encryptedSymmetricKey,
 		...pkpEthAddressBytes,
 	]);
-	// TODO: LitJsSdk.hashEncryptionKey ought to be renamed to just .hashBytes
-	const securityHashStr = await LitJsSdk.hashEncryptionKey({
-		encryptedSymmetricKey: securityHashPreimage,
+
+	const securityHashStr = await hashBytes({
+		bytes: securityHashPreimage,
 	});
 
 	console.log("Storing encryption condition with relay", {
@@ -476,102 +506,114 @@ async function handleStoreEncryptionCondition(
 	}
 }
 
-async function handleEncryptThenDecrypt(
-	setStatusFn,
-	googleCredentialResponse,
-	pkpEthAddress,
-	pkpPublicKey
-) {
-	setStatusFn("Encrypting then decrypting...");
-	var unifiedAccessControlConditions = [
-		{
-			conditionType: "evmBasic",
-			contractAddress: "",
-			standardContractType: "",
-			chain: "mumbai",
-			method: "",
-			parameters: [":userAddress"],
-			returnValueTest: {
-				comparator: "=",
-				value: pkpEthAddress,
-			},
-		},
-	];
-
-	// this will be fired if auth is needed. we can use this to prompt the user to sign in
-	const authNeededCallback = async ({
-		chain,
-		resources,
-		expiration,
-		uri,
-		litNodeClient,
-	}) => {
-		console.log("authNeededCallback fired");
-		const sessionSig = await litNodeClient.signSessionKey({
-			sessionKey: uri,
-			authMethods: [
-				{
-					authMethodType: 6,
-					accessToken: googleCredentialResponse.credential,
-				},
-			],
-			pkpPublicKey,
-			expiration,
-			resources,
-			chain,
-		});
-		console.log("got session sig from node and PKP: ", sessionSig);
-		return sessionSig;
-	};
-
-	// get the user a session with it
-	const litNodeClient = new LitJsSdk.LitNodeClient({
-		litNetwork: "serrano",
-	});
-	await litNodeClient.connect();
-
-	const sessionSigs = await litNodeClient.getSessionSigs({
-		expiration: new Date(Date.now() + 1000 * 60 * 60 * 24).toISOString(), // 24 hours
-		chain: "ethereum",
-		resources: [`litEncryptionCondition://*`],
-		switchChain: false,
-		authNeededCallback,
-	});
-	console.log("sessionSigs before saving encryption key: ", sessionSigs);
-
-	const { encryptedZip, symmetricKey } = await LitJsSdk.zipAndEncryptString(
-		"this is a secret message"
+async function hashBytes({ bytes }: { bytes: Uint8Array }): Promise<string> {
+	const hashOfBytes = await crypto.subtle.digest("SHA-256", bytes);
+	const hashOfBytesStr = LitJsSdk.uint8arrayToString(
+		new Uint8Array(hashOfBytes),
+		"base16"
 	);
-
-	const encryptedSymmetricKey = await litNodeClient.saveEncryptionKey({
-		unifiedAccessControlConditions,
-		symmetricKey,
-		sessionSigs,
-	});
-
-	const hashOfKey = await LitJsSdk.hashEncryptionKey({
-		encryptedSymmetricKey,
-	});
-
-	console.log("encrypted symmetric key", encryptedSymmetricKey);
-
-	const retrievedSymmKey = await litNodeClient.getEncryptionKey({
-		unifiedAccessControlConditions,
-		toDecrypt: LitJsSdk.uint8arrayToString(encryptedSymmetricKey, "base16"),
-		sessionSigs,
-	});
-
-	const decryptedFiles = await LitJsSdk.decryptZip(
-		encryptedZip,
-		retrievedSymmKey
-	);
-	const decryptedString = await decryptedFiles["string.txt"].async("text");
-	console.log("decrypted string", decryptedString);
-
-	setStatusFn("Success!");
+	return hashOfBytesStr;
 }
 
-async function handleWebAuthnRegister(setStatusFn, onSuccess) {
+// async function handleEncryptThenDecrypt(
+// 	setStatusFn,
+// 	googleCredentialResponse,
+// 	pkpEthAddress,
+// 	pkpPublicKey
+// ) {
+// 	setStatusFn("Encrypting then decrypting...");
+// 	var unifiedAccessControlConditions = [
+// 		{
+// 			conditionType: "evmBasic",
+// 			contractAddress: "",
+// 			standardContractType: "",
+// 			chain: "mumbai",
+// 			method: "",
+// 			parameters: [":userAddress"],
+// 			returnValueTest: {
+// 				comparator: "=",
+// 				value: pkpEthAddress,
+// 			},
+// 		},
+// 	];
+
+// 	// this will be fired if auth is needed. we can use this to prompt the user to sign in
+// 	const authNeededCallback = async ({
+// 		chain,
+// 		resources,
+// 		expiration,
+// 		uri,
+// 		litNodeClient,
+// 	}) => {
+// 		console.log("authNeededCallback fired");
+// 		const sessionSig = await litNodeClient.signSessionKey({
+// 			sessionKey: uri,
+// 			authMethods: [
+// 				{
+// 					authMethodType: 6,
+// 					accessToken: googleCredentialResponse.credential,
+// 				},
+// 			],
+// 			pkpPublicKey,
+// 			expiration,
+// 			resources,
+// 			chain,
+// 		});
+// 		console.log("got session sig from node and PKP: ", sessionSig);
+// 		return sessionSig;
+// 	};
+
+// 	// get the user a session with it
+// 	const litNodeClient = new LitJsSdk.LitNodeClient({
+// 		litNetwork: "serrano",
+// 	});
+// 	await litNodeClient.connect();
+
+// 	const sessionSigs = await litNodeClient.getSessionSigs({
+// 		expiration: new Date(Date.now() + 1000 * 60 * 60 * 24).toISOString(), // 24 hours
+// 		chain: "ethereum",
+// 		resources: [`litEncryptionCondition://*`],
+// 		switchChain: false,
+// 		authNeededCallback,
+// 	});
+// 	console.log("sessionSigs before saving encryption key: ", sessionSigs);
+
+// 	const { encryptedZip, symmetricKey } = await LitJsSdk.zipAndEncryptString(
+// 		"this is a secret message"
+// 	);
+
+// 	const encryptedSymmetricKey = await litNodeClient.saveEncryptionKey({
+// 		unifiedAccessControlConditions,
+// 		symmetricKey,
+// 		sessionSigs,
+// 	});
+
+// 	const hashOfKey = await LitJsSdk.hashEncryptionKey({
+// 		encryptedSymmetricKey,
+// 	});
+
+// 	console.log("encrypted symmetric key", encryptedSymmetricKey);
+
+// 	const retrievedSymmKey = await litNodeClient.getEncryptionKey({
+// 		unifiedAccessControlConditions,
+// 		toDecrypt: LitJsSdk.uint8arrayToString(encryptedSymmetricKey, "base16"),
+// 		sessionSigs,
+// 	});
+
+// 	const decryptedFiles = await LitJsSdk.decryptZip(
+// 		encryptedZip,
+// 		retrievedSymmKey
+// 	);
+// 	const decryptedString = await decryptedFiles["string.txt"].async("text");
+// 	console.log("decrypted string", decryptedString);
+
+// 	setStatusFn("Success!");
+// }
+
+async function handleWebAuthnRegister(
+	setStatusFn: (status: string) => void,
+	onSuccess: ({ attResp }: { attResp: any }) => void
+) {
 	const resp = await fetch(`${RELAY_API_URL}/generate-registration-options`);
 
 	let attResp;
@@ -620,11 +662,11 @@ async function handleWebAuthnRegister(setStatusFn, onSuccess) {
 }
 
 async function handleWebAuthnAuthenticate(
-	setStatusFn,
-	webAuthnCredentialPublicKey,
-	onSuccess,
-	setWebAuthnSignatureFn,
-	setWebAuthnSignatureBaseFn
+	setStatusFn: (status: string) => void,
+	webAuthnCredentialPublicKey: string,
+	onSuccess: (resp: any) => void,
+	setWebAuthnSignatureFn: (signature: string) => void,
+	setWebAuthnSignatureBaseFn: (signatureBase: string) => void
 ) {
 	const resp = await fetch(
 		`${RELAY_API_URL}/generate-authentication-options`

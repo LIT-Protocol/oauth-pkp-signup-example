@@ -2,19 +2,20 @@ import * as LitJsSdk_accessControlConditions from "@lit-protocol/access-control-
 import * as LitJsSdk_blsSdk from "@lit-protocol/bls-sdk";
 import { AccsDefaultParams } from "@lit-protocol/constants";
 import * as LitJsSdk from "@lit-protocol/lit-node-client";
-import { Button, ButtonGroup } from "@mui/material";
+import { Button, ButtonGroup, TextField } from "@mui/material";
 import { GoogleLogin } from "@react-oauth/google";
 import {
 	startAuthentication,
 	startRegistration,
 } from "@simplewebauthn/browser";
 import base64url from "base64url";
-import { utils } from "ethers";
+import { ethers, utils } from "ethers";
 import { hexlify } from "ethers/lib/utils";
 import { useState } from "react";
 import "./App.css";
 import { decodeAttestationObject } from "./utils/decodeAttestationObject";
 import { parseAuthenticatorData } from "./utils/parseAuthenticatorData";
+import { getDomainFromOrigin } from "./utils/string";
 
 type CredentialResponse = any;
 
@@ -36,14 +37,7 @@ function App() {
 	const [pkpPublicKey, setPkpPublicKey] = useState<string>("");
 	const [status, setStatus] = useState("");
 	const [selectedAuthMethod, setSelectedAuthMethod] = useState(6);
-	const [
-		webAuthnCredentialPublicKey,
-		setWebAuthnCredentialPublicKey,
-	] = useState<string>("");
-	const [webAuthnSignature, setWebAuthnSignature] = useState<string>("");
-	const [webAuthnSignatureBase, setWebAuthnSignatureBase] = useState<string>(
-		""
-	);
+	const [webAuthnUsername, setWebAuthnUsername] = useState<string>("");
 
 	const handleLoggedInToGoogle = async (
 		credentialResponse: CredentialResponse
@@ -97,7 +91,7 @@ function App() {
 			{selectedAuthMethod === 6 && (
 				<>
 					<h3>
-						Step 1: log in with Google. Upon OAuth success, we will
+						Step 1: Log in with Google. Upon OAuth success, we will
 						mint a PKP on your behalf.
 					</h3>
 					<GoogleLogin
@@ -139,62 +133,41 @@ function App() {
 			)}
 			{selectedAuthMethod === 3 && (
 				<>
-					<h3>Step 1: Register using WebAuthn.</h3>
+					<h3>Step 1: Register with username to mint PKP.</h3>
+					<TextField
+						label="Username"
+						variant="outlined"
+						onChange={e => setWebAuthnUsername(e.target.value)}
+					/>
 					<Button
 						variant="contained"
 						onClick={async () => {
 							await handleWebAuthnRegister(
+								webAuthnUsername,
 								setStatus,
-								({ attResp }) => {
-									const attestationObject = base64url.toBuffer(
-										attResp.response.attestationObject
-									);
-
-									const {
-										authData,
-									} = decodeAttestationObject(
-										window.cbor,
-										attestationObject
-									);
-
-									const parsedAuthData = parseAuthenticatorData(
-										window.cbor,
-										authData
-									);
-
-									console.log(
-										"storing credential public key in browser",
-										{
-											credentialPublicKey:
-												parsedAuthData.credentialPublicKey,
-										}
-									);
-
-									// set in local state
-									setWebAuthnCredentialPublicKey(
-										hexlify(
-											parsedAuthData.credentialPublicKey!
-										)
-									);
+								({ pkpEthAddress, pkpPublicKey }) => {
+									setPkpEthAddress(pkpEthAddress);
+									setPkpPublicKey(pkpPublicKey);
 								}
 							);
 						}}
 					>
 						Register
 					</Button>
-					<h3>Step 2: Authenticate using WebAuthn to mint PKP.</h3>
+					{pkpEthAddress && (
+						<div>PKP Eth Address: {pkpEthAddress}</div>
+					)}
+					<h3>
+						Step 2: Authenticate against Lit Nodes to generate auth
+						sigs.
+					</h3>
 					<Button
 						variant="contained"
 						onClick={async () => {
 							await handleWebAuthnAuthenticate(
 								setStatus,
-								webAuthnCredentialPublicKey,
-								({ pkpEthAddress, pkpPublicKey }) => {
-									setPkpEthAddress(pkpEthAddress);
-									setPkpPublicKey(pkpPublicKey);
-								},
-								setWebAuthnSignature,
-								setWebAuthnSignatureBase
+								webAuthnUsername,
+								({}) => {}
 							);
 						}}
 					>
@@ -215,9 +188,9 @@ function App() {
 								selectedAuthMethod,
 								googleCredentialResponse,
 								{
-									signature: webAuthnSignature,
-									signatureBase: webAuthnSignatureBase,
-									credentialPublicKey: webAuthnCredentialPublicKey,
+									signature: "dummy",
+									signatureBase: "dummy",
+									credentialPublicKey: "dummy",
 								},
 								pkpEthAddress,
 								pkpPublicKey
@@ -247,38 +220,6 @@ async function mintPkpUsingRelayerGoogleAuthVerificationEndpoint(
 		},
 		body: JSON.stringify({
 			idToken: credentialResponse.credential,
-		}),
-	});
-
-	if (mintRes.status < 200 || mintRes.status >= 400) {
-		console.warn("Something wrong with the API call", await mintRes.json());
-		setStatusFn("Uh oh, something's not quite right.");
-		return null;
-	} else {
-		const resBody = await mintRes.json();
-		console.log("Response OK", { body: resBody });
-		setStatusFn("Successfully initiated minting PKP with relayer.");
-		return resBody.requestId;
-	}
-}
-
-async function mintPkpUsingRelayerWebAuthnVerificationEndpoint(
-	signature: string,
-	signatureBase: string,
-	credentialPublicKey: string,
-	setStatusFn: (status: string) => void
-) {
-	setStatusFn("Minting PKP with relayer...");
-
-	const mintRes = await fetch(`${RELAY_API_URL}/auth/webauthn`, {
-		method: "POST",
-		headers: {
-			"Content-Type": "application/json",
-		},
-		body: JSON.stringify({
-			signature,
-			signatureBase,
-			credentialPublicKey,
 		}),
 	});
 
@@ -420,8 +361,24 @@ async function handleStoreEncryptionCondition(
 	};
 
 	// get the user a session with it
+	// TODO: change to serrano once deployed on node side.
 	const litNodeClient = new LitJsSdk.LitNodeClient({
-		litNetwork: "serrano",
+		alertWhenUnauthorized: false,
+		litNetwork: "custom",
+		bootstrapUrls: [
+			"http://localhost:7470",
+			"http://localhost:7471",
+			"http://localhost:7472",
+			// "http://localhost:7473",
+			// "http://localhost:7474",
+			// "http://localhost:7475",
+			// "http://localhost:7476",
+			// "http://localhost:7477",
+			// "http://localhost:7478",
+			// "http://localhost:7479",
+		],
+		debug: true,
+		minNodeCount: 2,
 	});
 	await litNodeClient.connect();
 
@@ -611,10 +568,19 @@ async function hashBytes({ bytes }: { bytes: Uint8Array }): Promise<string> {
 // }
 
 async function handleWebAuthnRegister(
+	username: string,
 	setStatusFn: (status: string) => void,
-	onSuccess: ({ attResp }: { attResp: any }) => void
+	onSuccess: ({
+		pkpEthAddress,
+		pkpPublicKey,
+	}: {
+		pkpEthAddress: string;
+		pkpPublicKey: string;
+	}) => void
 ) {
-	const resp = await fetch(`${RELAY_API_URL}/generate-registration-options`);
+	const resp = await fetch(
+		`${RELAY_API_URL}/auth/webauthn/generate-registration-options?username=${username}`
+	);
 
 	let attResp;
 	try {
@@ -635,110 +601,105 @@ async function handleWebAuthnRegister(
 
 	console.log("attResp", { attResp });
 
-	const verificationResp = await fetch(
-		`${RELAY_API_URL}/verify-registration`,
+	// Verify and mint PKP.
+	setStatusFn("Verifying WebAuthn registration...");
+	const verificationAndMintResp = await fetch(
+		`${RELAY_API_URL}/auth/webauthn/verify-registration`,
 		{
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
 			},
-			body: JSON.stringify(attResp),
+			body: JSON.stringify({ credential: attResp, username }),
 		}
 	);
 
-	const verificationJSON = await verificationResp.json();
-
-	if (verificationJSON && verificationJSON.verified) {
-		setStatusFn("Successfully registered using WebAuthn!");
-		onSuccess({ attResp });
-	} else {
-		setStatusFn(
-			"Oh no, something went wrong during WebAuthn registration."
+	if (
+		verificationAndMintResp.status < 200 ||
+		verificationAndMintResp.status >= 400
+	) {
+		console.warn(
+			"Something went wrong with the API call",
+			await verificationAndMintResp.json()
 		);
-		console.error("Error during WebAuthn registration", {
-			err: JSON.stringify(verificationJSON),
-		});
-	}
-}
-
-async function handleWebAuthnAuthenticate(
-	setStatusFn: (status: string) => void,
-	webAuthnCredentialPublicKey: string,
-	onSuccess: (resp: any) => void,
-	setWebAuthnSignatureFn: (signature: string) => void,
-	setWebAuthnSignatureBaseFn: (signatureBase: string) => void
-) {
-	const resp = await fetch(
-		`${RELAY_API_URL}/generate-authentication-options`
-	);
-
-	let asseResp;
-	try {
-		const opts = await resp.json();
-
-		asseResp = await startAuthentication(opts);
-	} catch (error) {
-		// TODO: handle error
-		throw error;
+		setStatusFn("Uh oh, something's not quite right.");
+		return null;
 	}
 
-	const verificationResp = await fetch(
-		`${RELAY_API_URL}/verify-authentication`,
-		{
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-			},
-			body: JSON.stringify(asseResp),
-		}
-	);
-
-	const verificationJSON = await verificationResp.json();
-
-	if (verificationJSON && verificationJSON.verified) {
-		setStatusFn("Successfully authenticated using WebAuthn!");
-	} else {
-		setStatusFn(
-			"Oh no, something went wrong during WebAuthn authentication."
-		);
-		console.error("Error during WebAuthn authentication", {
-			err: JSON.stringify(verificationJSON),
-		});
-	}
-
-	const clientDataHash = await crypto.subtle.digest(
-		"SHA-256",
-		base64url.toBuffer(asseResp.response.clientDataJSON)
-	);
-
-	const authDataBuffer = base64url.toBuffer(
-		asseResp.response.authenticatorData
-	);
-
-	const signatureBase = Buffer.concat([
-		authDataBuffer,
-		Buffer.from(clientDataHash),
-	]);
-
-	const signature = base64url.toBuffer(asseResp.response.signature);
-
-	// mint PKP using Relayer
-	console.log("Minting PKP using Relayer...", {
-		signature: hexlify(signature),
-		signatureBase: hexlify(signatureBase),
-		webAuthnCredentialPublicKey,
-	});
-	const requestId = await mintPkpUsingRelayerWebAuthnVerificationEndpoint(
-		hexlify(signature),
-		hexlify(signatureBase),
-		webAuthnCredentialPublicKey,
-		setStatusFn
+	const resBody = await verificationAndMintResp.json();
+	console.log("Response OK", { body: resBody });
+	setStatusFn(
+		"Successfully registered using WebAuthn! PKP minting initiated..."
 	);
 
 	// Poll until success
-	await pollRequestUntilTerminalState(requestId, setStatusFn, onSuccess);
+	const mintRequestId = resBody.requestId;
+	await pollRequestUntilTerminalState(mintRequestId, setStatusFn, onSuccess);
+}
 
-	// Update state
-	setWebAuthnSignatureFn(hexlify(signature));
-	setWebAuthnSignatureBaseFn(hexlify(signatureBase));
+const rpcUrl = process.env.REACT_APP_RPC_URL || "http://localhost:8545";
+
+async function handleWebAuthnAuthenticate(
+	setStatusFn: (status: string) => void,
+	webAuthnUsername: string,
+	onSuccess: (resp: any) => void
+) {
+	// Fetch latest blockHash
+	setStatusFn("Fetching latest block hash...");
+	const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
+
+	const block = await provider.getBlock("latest");
+	const blockHash = block.hash;
+
+	// Turn into byte array.
+	const blockHashBytes = ethers.utils.arrayify(blockHash);
+	console.log(
+		"blockHash",
+		blockHash,
+		blockHashBytes,
+		base64url(Buffer.from(blockHashBytes))
+	);
+
+	// Construct authentication options.
+	const rpId = getDomainFromOrigin(window.location.origin);
+	console.log("Using rpId: ", { rpId });
+	const authenticationOptions = {
+		challenge: base64url(Buffer.from(blockHashBytes)),
+		timeout: 60000,
+		userVerification: "required",
+		rpId,
+	};
+
+	// Authenticate with WebAuthn.
+	setStatusFn("Authenticating with WebAuthn...");
+	const authenticationResponse = await startAuthentication(
+		authenticationOptions
+	);
+
+	// Call all nodes POST /web/auth/webauthn to generate authSig.
+	setStatusFn("Verifying WebAuthn authentication against Lit Network...");
+	// TODO: change to serrano once deployed on node side.
+	const litNodeClient = new LitJsSdk.LitNodeClient({
+		alertWhenUnauthorized: false,
+		litNetwork: "custom",
+		bootstrapUrls: [
+			"http://localhost:7470",
+			"http://localhost:7471",
+			"http://localhost:7472",
+			// "http://localhost:7473",
+			// "http://localhost:7474",
+			// "http://localhost:7475",
+			// "http://localhost:7476",
+			// "http://localhost:7477",
+			// "http://localhost:7478",
+			// "http://localhost:7479",
+		],
+		debug: true,
+		minNodeCount: 2,
+	});
+	await litNodeClient.connect();
+	litNodeClient.getWebAuthnAuthenticationAuthSig({
+		verificationParams: authenticationResponse,
+		username: webAuthnUsername,
+	});
 }

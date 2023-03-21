@@ -3,7 +3,7 @@ import * as LitJsSdk_blsSdk from "@lit-protocol/bls-sdk";
 import { AccsDefaultParams } from "@lit-protocol/constants";
 import * as LitJsSdk from "@lit-protocol/lit-node-client";
 import { Button, ButtonGroup } from "@mui/material";
-import { GoogleLogin } from "@react-oauth/google";
+// import { GoogleLogin } from "@react-oauth/google";
 import {
 	startAuthentication,
 	startRegistration,
@@ -11,10 +11,15 @@ import {
 import base64url from "base64url";
 import { utils } from "ethers";
 import { hexlify } from "ethers/lib/utils";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import "./App.css";
 import { decodeAttestationObject } from "./utils/decodeAttestationObject";
 import { parseAuthenticatorData } from "./utils/parseAuthenticatorData";
+import {
+	signInWithGoogle,
+	handleSignInRedirect,
+	isSignInRedirect,
+} from "./utils/google";
 
 type CredentialResponse = any;
 
@@ -26,6 +31,10 @@ declare global {
 
 const RELAY_API_URL =
 	process.env.REACT_APP_RELAY_API_URL || "http://localhost:3001";
+const RELAY_API_KEY =
+	process.env.REACT_APP_RELAY_API_KEY || "test-relay-api-key";
+const REDIRECT_URI =
+	process.env.REACT_APP_REDIRECT_URI || "http://localhost:3000";
 
 function App() {
 	const [pkpEthAddress, setPkpEthAddress] = useState<string>("");
@@ -67,6 +76,24 @@ function App() {
 		);
 	};
 
+	useEffect(() => {
+		if (isSignInRedirect(REDIRECT_URI)) {
+			const idToken = handleSignInRedirect(REDIRECT_URI);
+			if (idToken) {
+				try {
+					handleLoggedInToGoogle({
+						credential: idToken,
+					});
+				} catch (err) {
+					console.error(err);
+					setStatus(
+						"Uh oh, something went wrong. Check the console for error logs."
+					);
+				}
+			}
+		}
+	}, []);
+
 	return (
 		<div className="App">
 			<div style={{ height: 80 }} />
@@ -100,13 +127,22 @@ function App() {
 						Step 1: log in with Google. Upon OAuth success, we will
 						mint a PKP on your behalf.
 					</h3>
-					<GoogleLogin
+					{/* <GoogleLogin
 						onSuccess={handleLoggedInToGoogle}
 						onError={() => {
 							console.log("Login Failed");
 						}}
 						useOneTap
-					/>
+					/> */}
+					<Button
+						variant="contained"
+						onClick={() => {
+							signInWithGoogle(REDIRECT_URI);
+						}}
+					>
+						Sign in with Google
+					</Button>
+
 					{pkpEthAddress && (
 						<div>PKP Eth Address: {pkpEthAddress}</div>
 					)}
@@ -244,6 +280,7 @@ async function mintPkpUsingRelayerGoogleAuthVerificationEndpoint(
 		method: "POST",
 		headers: {
 			"Content-Type": "application/json",
+			"api-key": RELAY_API_KEY,
 		},
 		body: JSON.stringify({
 			idToken: credentialResponse.credential,
@@ -274,6 +311,7 @@ async function mintPkpUsingRelayerWebAuthnVerificationEndpoint(
 		method: "POST",
 		headers: {
 			"Content-Type": "application/json",
+			"api-key": RELAY_API_KEY,
 		},
 		body: JSON.stringify({
 			signature,
@@ -313,7 +351,13 @@ async function pollRequestUntilTerminalState(
 	for (let i = 0; i < maxPollCount; i++) {
 		setStatusFn(`Waiting for auth completion (poll #${i + 1})`);
 		const getAuthStatusRes = await fetch(
-			`${RELAY_API_URL}/auth/status/${requestId}`
+			`${RELAY_API_URL}/auth/status/${requestId}`,
+			{
+				method: "GET",
+				headers: {
+					"api-key": RELAY_API_KEY,
+				},
+			}
 		);
 
 		if (getAuthStatusRes.status < 200 || getAuthStatusRes.status >= 400) {
@@ -482,6 +526,7 @@ async function handleStoreEncryptionCondition(
 		method: "POST",
 		headers: {
 			"Content-Type": "application/json",
+			"api-key": RELAY_API_KEY,
 		},
 		body: JSON.stringify({
 			key: hashedEncryptedSymmetricKeyStr,
@@ -614,7 +659,12 @@ async function handleWebAuthnRegister(
 	setStatusFn: (status: string) => void,
 	onSuccess: ({ attResp }: { attResp: any }) => void
 ) {
-	const resp = await fetch(`${RELAY_API_URL}/generate-registration-options`);
+	const resp = await fetch(`${RELAY_API_URL}/generate-registration-options`, {
+		method: "GET",
+		headers: {
+			"api-key": RELAY_API_KEY,
+		},
+	});
 
 	let attResp;
 	try {
@@ -641,6 +691,7 @@ async function handleWebAuthnRegister(
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
+				"api-key": RELAY_API_KEY,
 			},
 			body: JSON.stringify(attResp),
 		}
@@ -669,7 +720,13 @@ async function handleWebAuthnAuthenticate(
 	setWebAuthnSignatureBaseFn: (signatureBase: string) => void
 ) {
 	const resp = await fetch(
-		`${RELAY_API_URL}/generate-authentication-options`
+		`${RELAY_API_URL}/generate-authentication-options`,
+		{
+			method: "GET",
+			headers: {
+				"api-key": RELAY_API_KEY,
+			},
+		}
 	);
 
 	let asseResp;
@@ -688,6 +745,7 @@ async function handleWebAuthnAuthenticate(
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
+				"api-key": RELAY_API_KEY,
 			},
 			body: JSON.stringify(asseResp),
 		}

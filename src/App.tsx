@@ -1,7 +1,7 @@
 import * as LitJsSdk_accessControlConditions from "@lit-protocol/access-control-conditions";
 import * as LitJsSdk_blsSdk from "@lit-protocol/bls-sdk";
-import { AccsDefaultParams } from "@lit-protocol/constants";
 import * as LitJsSdk from "@lit-protocol/lit-node-client";
+import { AccsDefaultParams } from "@lit-protocol/types";
 import { Button, ButtonGroup, TextField } from "@mui/material";
 import { GoogleLogin } from "@react-oauth/google";
 import {
@@ -10,11 +10,8 @@ import {
 } from "@simplewebauthn/browser";
 import base64url from "base64url";
 import { ethers, utils } from "ethers";
-import { hexlify } from "ethers/lib/utils";
 import { useState } from "react";
 import "./App.css";
-import { decodeAttestationObject } from "./utils/decodeAttestationObject";
-import { parseAuthenticatorData } from "./utils/parseAuthenticatorData";
 import { getDomainFromOrigin } from "./utils/string";
 
 type CredentialResponse = any;
@@ -133,7 +130,7 @@ function App() {
 			)}
 			{selectedAuthMethod === 3 && (
 				<>
-					<h3>Step 1: Register with username to mint PKP.</h3>
+					<h3>Step 1: Register to mint PKP. (optional username)</h3>
 					<TextField
 						label="Username"
 						variant="outlined"
@@ -166,7 +163,6 @@ function App() {
 						onClick={async () => {
 							await handleWebAuthnAuthenticate(
 								setStatus,
-								webAuthnUsername,
 								({}) => {}
 							);
 						}}
@@ -217,6 +213,7 @@ async function mintPkpUsingRelayerGoogleAuthVerificationEndpoint(
 		method: "POST",
 		headers: {
 			"Content-Type": "application/json",
+			"api-key": "1234567890",
 		},
 		body: JSON.stringify({
 			idToken: credentialResponse.credential,
@@ -254,7 +251,12 @@ async function pollRequestUntilTerminalState(
 	for (let i = 0; i < maxPollCount; i++) {
 		setStatusFn(`Waiting for auth completion (poll #${i + 1})`);
 		const getAuthStatusRes = await fetch(
-			`${RELAY_API_URL}/auth/status/${requestId}`
+			`${RELAY_API_URL}/auth/status/${requestId}`,
+			{
+				headers: {
+					"api-key": "1234567890",
+				},
+			}
 		);
 
 		if (getAuthStatusRes.status < 200 || getAuthStatusRes.status >= 400) {
@@ -439,6 +441,7 @@ async function handleStoreEncryptionCondition(
 		method: "POST",
 		headers: {
 			"Content-Type": "application/json",
+			"api-key": "1234567890",
 		},
 		body: JSON.stringify({
 			key: hashedEncryptedSymmetricKeyStr,
@@ -578,9 +581,14 @@ async function handleWebAuthnRegister(
 		pkpPublicKey: string;
 	}) => void
 ) {
-	const resp = await fetch(
-		`${RELAY_API_URL}/auth/webauthn/generate-registration-options?username=${username}`
-	);
+	let url = `${RELAY_API_URL}/auth/webauthn/generate-registration-options`;
+
+	// Handle optional username
+	if (!username && username !== "") {
+		url += `?username=${username}`;
+	}
+
+	const resp = await fetch(url, { headers: { "api-key": "1234567890" } });
 
 	let attResp;
 	try {
@@ -609,8 +617,9 @@ async function handleWebAuthnRegister(
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
+				"api-key": "1234567890",
 			},
-			body: JSON.stringify({ credential: attResp, username }),
+			body: JSON.stringify({ credential: attResp }),
 		}
 	);
 
@@ -641,7 +650,6 @@ const rpcUrl = process.env.REACT_APP_RPC_URL || "http://localhost:8545";
 
 async function handleWebAuthnAuthenticate(
 	setStatusFn: (status: string) => void,
-	webAuthnUsername: string,
 	onSuccess: (resp: any) => void
 ) {
 	// Fetch latest blockHash
@@ -676,6 +684,15 @@ async function handleWebAuthnAuthenticate(
 		authenticationOptions
 	);
 
+	// BUG: We need to make sure userHandle is base64url encoded.
+	// Deep copy the authentication response.
+	const actualAuthenticationResponse = JSON.parse(
+		JSON.stringify(authenticationResponse)
+	);
+	actualAuthenticationResponse.response.userHandle = base64url.encode(
+		authenticationResponse.response.userHandle
+	);
+
 	// Call all nodes POST /web/auth/webauthn to generate authSig.
 	setStatusFn("Verifying WebAuthn authentication against Lit Network...");
 	// TODO: change to serrano once deployed on node side.
@@ -699,7 +716,6 @@ async function handleWebAuthnAuthenticate(
 	});
 	await litNodeClient.connect();
 	litNodeClient.getWebAuthnAuthenticationAuthSig({
-		verificationParams: authenticationResponse,
-		username: webAuthnUsername,
+		verificationParams: actualAuthenticationResponse,
 	});
 }

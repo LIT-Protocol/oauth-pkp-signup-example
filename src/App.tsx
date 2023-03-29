@@ -715,7 +715,16 @@ async function handleWebAuthnAuthenticate(
 		minNodeCount: 2,
 	});
 	await litNodeClient.connect();
-	litNodeClient.getWebAuthnAuthenticationAuthSig({
-		verificationParams: actualAuthenticationResponse,
+
+	// Generate authMethod.
+	const authMethod = litNodeClient.generateAuthMethodForWebAuthn(
+		actualAuthenticationResponse
+	);
+
+	// Get authSig.
+	litNodeClient.signSessionKey({
+		authMethods: [authMethod],
+		expiration: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+		resources: [],
 	});
 }

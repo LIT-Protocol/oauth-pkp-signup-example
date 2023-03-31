@@ -43,6 +43,9 @@ function App() {
 	const [selectedAuthMethod, setSelectedAuthMethod] = useState(6);
 	const [webAuthnUsername, setWebAuthnUsername] = useState<string>("");
 	const [authSig, setAuthSig] = useState<JsonAuthSig | null>(null);
+	const [executeJsSignature, setExecuteJsSignature] = useState<string | null>(
+		null
+	);
 
 	const handleLoggedInToGoogle = async (
 		credentialResponse: CredentialResponse
@@ -206,16 +209,23 @@ function App() {
 					</h3>
 					<Button
 						variant="contained"
-						onClick={() =>
-							handleExecuteJs(
+						onClick={async () => {
+							const signature = await handleExecuteJs(
 								setStatus,
 								authSig!,
 								authenticatedPkpPublicKey
-							)
-						}
+							);
+							setExecuteJsSignature(signature);
+						}}
 					>
 						Execute Lit Action
 					</Button>
+					{executeJsSignature && (
+						<div>
+							<b>Executed Lit Action Signature: </b>
+							{executeJsSignature}
+						</div>
+					)}
 				</>
 			)}
 		</div>
@@ -228,7 +238,7 @@ async function handleExecuteJs(
 	setStatusFn: (status: string) => void,
 	authSig: JsonAuthSig,
 	pkpPublicKey: string
-) {
+): Promise<string> {
 	setStatusFn("Executing JS...");
 	const litActionCode = `
 const go = async () => {
@@ -266,6 +276,8 @@ go();
 		},
 	});
 	console.log("results: ", results);
+
+	return results.signatures["sig1"].signature;
 }
 
 async function mintPkpUsingRelayerGoogleAuthVerificationEndpoint(

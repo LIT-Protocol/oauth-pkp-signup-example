@@ -1,7 +1,7 @@
 import * as LitJsSdk_accessControlConditions from "@lit-protocol/access-control-conditions";
 import * as LitJsSdk_blsSdk from "@lit-protocol/bls-sdk";
 import * as LitJsSdk from "@lit-protocol/lit-node-client";
-import { AccsDefaultParams } from "@lit-protocol/types";
+import { AccsDefaultParams, JsonAuthSig } from "@lit-protocol/types";
 import { Button, ButtonGroup, TextField } from "@mui/material";
 import { GoogleLogin } from "@react-oauth/google";
 import {
@@ -26,15 +26,23 @@ const RELAY_API_URL =
 	process.env.REACT_APP_RELAY_API_URL || "http://localhost:3001";
 
 function App() {
-	const [pkpEthAddress, setPkpEthAddress] = useState<string>("");
+	const [registeredPkpEthAddress, setRegisteredPkpEthAddress] = useState<
+		string
+	>("");
 	const [
 		googleCredentialResponse,
 		setGoogleCredentialResponse,
 	] = useState<CredentialResponse | null>(null);
-	const [pkpPublicKey, setPkpPublicKey] = useState<string>("");
+	const [registeredPkpPublicKey, setRegisteredPkpPublicKey] = useState<
+		string
+	>("");
+	const [authenticatedPkpPublicKey, setAuthenticatedPkpPublicKey] = useState<
+		string
+	>("");
 	const [status, setStatus] = useState("");
 	const [selectedAuthMethod, setSelectedAuthMethod] = useState(6);
 	const [webAuthnUsername, setWebAuthnUsername] = useState<string>("");
+	const [authSig, setAuthSig] = useState<JsonAuthSig | null>(null);
 
 	const handleLoggedInToGoogle = async (
 		credentialResponse: CredentialResponse
@@ -52,8 +60,8 @@ function App() {
 			requestId,
 			setStatus,
 			({ pkpEthAddress, pkpPublicKey }) => {
-				setPkpEthAddress(pkpEthAddress);
-				setPkpPublicKey(pkpPublicKey);
+				setRegisteredPkpEthAddress(pkpEthAddress);
+				setRegisteredPkpPublicKey(pkpPublicKey);
 			}
 		);
 	};
@@ -98,8 +106,11 @@ function App() {
 						}}
 						useOneTap
 					/>
-					{pkpEthAddress && (
-						<div>PKP Eth Address: {pkpEthAddress}</div>
+					{registeredPkpEthAddress && (
+						<div>
+							Registered PKP Eth Address:{" "}
+							{registeredPkpEthAddress}
+						</div>
 					)}
 					<h3>
 						<s>
@@ -119,8 +130,8 @@ function App() {
 									signatureBase: "dummy",
 									credentialPublicKey: "dummy",
 								},
-								pkpEthAddress,
-								pkpPublicKey
+								registeredPkpEthAddress,
+								registeredPkpPublicKey
 							)
 						}
 					>
@@ -143,16 +154,19 @@ function App() {
 								webAuthnUsername,
 								setStatus,
 								({ pkpEthAddress, pkpPublicKey }) => {
-									setPkpEthAddress(pkpEthAddress);
-									setPkpPublicKey(pkpPublicKey);
+									setRegisteredPkpEthAddress(pkpEthAddress);
+									setRegisteredPkpPublicKey(pkpPublicKey);
 								}
 							);
 						}}
 					>
 						Register
 					</Button>
-					{pkpEthAddress && (
-						<div>PKP Eth Address: {pkpEthAddress}</div>
+					{registeredPkpEthAddress && (
+						<div>
+							<b>Registered PKP Eth Address: </b>
+							{registeredPkpEthAddress}
+						</div>
 					)}
 					<h3>
 						Step 2: Authenticate against Lit Nodes to generate auth
@@ -161,39 +175,46 @@ function App() {
 					<Button
 						variant="contained"
 						onClick={async () => {
-							await handleWebAuthnAuthenticate(
-								setStatus,
-								({}) => {}
-							);
+							const {
+								authSig,
+								pkpPublicKey,
+							} = await handleWebAuthnAuthenticate(setStatus);
+							setAuthSig(authSig);
+
+							// After authenticating, we can store the pkpPublicKey for executing a
+							// Lit Action later.
+							setAuthenticatedPkpPublicKey(pkpPublicKey);
 						}}
 					>
 						Authenticate
 					</Button>
+					{authenticatedPkpPublicKey && authSig && (
+						<>
+							<div>
+								<b>Authenticated PKP Public Key: </b>
+								{authenticatedPkpPublicKey}
+							</div>
+							<div>
+								<b>Auth Sig: </b>
+								{JSON.stringify(authSig)}
+							</div>
+						</>
+					)}
 					<h3>
-						<s>
-							Step 3: Use Lit Network to obtain a session sig and
-							then store an encryption condition.
-						</s>
-						(Session Sigs do not work currently.)
+						Step 3: Generate session signatures and use them to
+						execute a Lit Action.
 					</h3>
 					<Button
 						variant="contained"
 						onClick={() =>
-							handleStoreEncryptionCondition(
+							handleExecuteJs(
 								setStatus,
-								selectedAuthMethod,
-								googleCredentialResponse,
-								{
-									signature: "dummy",
-									signatureBase: "dummy",
-									credentialPublicKey: "dummy",
-								},
-								pkpEthAddress,
-								pkpPublicKey
+								authSig!,
+								authenticatedPkpPublicKey
 							)
 						}
 					>
-						Encrypt With Lit
+						Execute Lit Action
 					</Button>
 				</>
 			)}
@@ -202,6 +223,50 @@ function App() {
 }
 
 export default App;
+
+async function handleExecuteJs(
+	setStatusFn: (status: string) => void,
+	authSig: JsonAuthSig,
+	pkpPublicKey: string
+) {
+	setStatusFn("Executing JS...");
+	const litActionCode = `
+const go = async () => {
+  // this requests a signature share from the Lit Node
+  // the signature share will be automatically returned in the response from the node
+  // and combined into a full signature by the LitJsSdk for you to use on the client
+  // all the params (toSign, publicKey, sigName) are passed in from the LitJsSdk.executeJs() function
+  const sigShare = await LitActions.signEcdsa({ toSign, publicKey, sigName });
+};
+
+go();
+`;
+	const litNodeClient = new LitJsSdk.LitNodeClient({
+		alertWhenUnauthorized: false,
+		litNetwork: "custom",
+		bootstrapUrls: [
+			"http://localhost:7470",
+			"http://localhost:7471",
+			"http://localhost:7472",
+		],
+		debug: true,
+		minNodeCount: 2,
+	});
+	await litNodeClient.connect();
+
+	const results = await litNodeClient.executeJs({
+		code: litActionCode,
+		authSig,
+		// all jsParams can be used anywhere in your litActionCode
+		jsParams: {
+			// this is the string "Hello World" for testing
+			toSign: [72, 101, 108, 108, 111, 32, 87, 111, 114, 108, 100],
+			publicKey: `0x${pkpPublicKey}`,
+			sigName: "sig1",
+		},
+	});
+	console.log("results: ", results);
+}
 
 async function mintPkpUsingRelayerGoogleAuthVerificationEndpoint(
 	credentialResponse: any,
@@ -649,9 +714,11 @@ async function handleWebAuthnRegister(
 const rpcUrl = process.env.REACT_APP_RPC_URL || "http://localhost:8545";
 
 async function handleWebAuthnAuthenticate(
-	setStatusFn: (status: string) => void,
-	onSuccess: (resp: any) => void
-) {
+	setStatusFn: (status: string) => void
+): Promise<{
+	authSig: JsonAuthSig;
+	pkpPublicKey: string;
+}> {
 	// Fetch latest blockHash
 	setStatusFn("Fetching latest block hash...");
 	const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
@@ -703,13 +770,6 @@ async function handleWebAuthnAuthenticate(
 			"http://localhost:7470",
 			"http://localhost:7471",
 			"http://localhost:7472",
-			// "http://localhost:7473",
-			// "http://localhost:7474",
-			// "http://localhost:7475",
-			// "http://localhost:7476",
-			// "http://localhost:7477",
-			// "http://localhost:7478",
-			// "http://localhost:7479",
 		],
 		debug: true,
 		minNodeCount: 2,
@@ -722,9 +782,11 @@ async function handleWebAuthnAuthenticate(
 	);
 
 	// Get authSig.
-	litNodeClient.signSessionKey({
+	const { authSig, pkpPublicKey } = await litNodeClient.signSessionKey({
 		authMethods: [authMethod],
 		expiration: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
 		resources: [],
 	});
+
+	return { authSig, pkpPublicKey };
 }

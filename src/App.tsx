@@ -662,7 +662,7 @@ async function handleWebAuthnRegister(
 
 	// Handle optional username
 	if (username !== "") {
-		url += `?username=${username}`;
+		url += `?username=${encodeURIComponent(username)}`;
 	}
 
 	const resp = await fetch(url, { headers: { "api-key": "1234567890" } });

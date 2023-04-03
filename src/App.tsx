@@ -661,7 +661,7 @@ async function handleWebAuthnRegister(
 	let url = `${RELAY_API_URL}/auth/webauthn/generate-registration-options`;
 
 	// Handle optional username
-	if (!username && username !== "") {
+	if (username !== "") {
 		url += `?username=${username}`;
 	}
 

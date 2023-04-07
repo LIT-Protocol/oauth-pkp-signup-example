@@ -252,15 +252,7 @@ const go = async () => {
 go();
 `;
 	const litNodeClient = new LitJsSdk.LitNodeClient({
-		alertWhenUnauthorized: false,
-		litNetwork: "custom",
-		bootstrapUrls: [
-			"http://localhost:7470",
-			"http://localhost:7471",
-			"http://localhost:7472",
-		],
-		debug: true,
-		minNodeCount: 2,
+		litNetwork: "serrano",
 	});
 	await litNodeClient.connect();
 
@@ -440,24 +432,8 @@ async function handleStoreEncryptionCondition(
 	};
 
 	// get the user a session with it
-	// TODO: change to serrano once deployed on node side.
 	const litNodeClient = new LitJsSdk.LitNodeClient({
-		alertWhenUnauthorized: false,
-		litNetwork: "custom",
-		bootstrapUrls: [
-			"http://localhost:7470",
-			"http://localhost:7471",
-			"http://localhost:7472",
-			// "http://localhost:7473",
-			// "http://localhost:7474",
-			// "http://localhost:7475",
-			// "http://localhost:7476",
-			// "http://localhost:7477",
-			// "http://localhost:7478",
-			// "http://localhost:7479",
-		],
-		debug: true,
-		minNodeCount: 2,
+		litNetwork: "serrano",
 	});
 	await litNodeClient.connect();
 
@@ -774,17 +750,8 @@ async function handleWebAuthnAuthenticate(
 
 	// Call all nodes POST /web/auth/webauthn to generate authSig.
 	setStatusFn("Verifying WebAuthn authentication against Lit Network...");
-	// TODO: change to serrano once deployed on node side.
 	const litNodeClient = new LitJsSdk.LitNodeClient({
-		alertWhenUnauthorized: false,
-		litNetwork: "custom",
-		bootstrapUrls: [
-			"http://localhost:7470",
-			"http://localhost:7471",
-			"http://localhost:7472",
-		],
-		debug: true,
-		minNodeCount: 2,
+		litNetwork: "serrano",
 	});
 	await litNodeClient.connect();
 

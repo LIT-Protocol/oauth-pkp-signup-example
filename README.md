@@ -20,4 +20,5 @@ Sign in with Google and wait until it says "PKP Minted". Then, click the "Encryp
 You also need to set 2 env vars:
 
 export REACT_APP_RELAY_API_URL="https://relay-server-staging.herokuapp.com"
+
 export REACT_APP_RPC_URL="https://chain-rpc.litprotcol.com/http"

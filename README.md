@@ -13,6 +13,6 @@ This project specifically:
 
 ## How to run
 
-First, run `yarn install`. Then run `yarn start` to run this project. You'll need a Metamask wallet set to the Mumbai network with some testnet MATIC in it.
+First, run `yarn install`. Then run `yarn start` to run this project. You'll need a Metamask wallet set to the Chronicle network with some Lit Test tokens in it. You can learn more about Chronicle here: https://developer.litprotocol.com/intro/rollup
 
 Sign in with Google and wait until it says "PKP Minted". Then, click the "Encrypt then Decrypt with Lit" button. If you see the word "Success!" at the top, then it worked! Open the dev console to see how it works.

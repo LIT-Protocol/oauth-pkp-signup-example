@@ -1,7 +1,7 @@
 import * as LitJsSdk_accessControlConditions from "@lit-protocol/access-control-conditions";
 import * as LitJsSdk_blsSdk from "@lit-protocol/bls-sdk";
 import * as LitJsSdk from "@lit-protocol/lit-node-client";
-import { AccsDefaultParams, JsonAuthSig } from "@lit-protocol/types";
+import { AccsDefaultParams, AuthSig, AuthCallback } from "@lit-protocol/types";
 import { Button, ButtonGroup, TextField } from "@mui/material";
 import { GoogleLogin } from "@react-oauth/google";
 import {
@@ -42,7 +42,7 @@ function App() {
 	const [status, setStatus] = useState("");
 	const [selectedAuthMethod, setSelectedAuthMethod] = useState(6);
 	const [webAuthnUsername, setWebAuthnUsername] = useState<string>("");
-	const [authSig, setAuthSig] = useState<JsonAuthSig | null>(null);
+	const [authSig, setAuthSig] = useState<AuthSig | null>(null);
 	const [executeJsSignature, setExecuteJsSignature] = useState<string | null>(
 		null
 	);
@@ -122,11 +122,8 @@ function App() {
 						</div>
 					)}
 					<h3>
-						<s>
-							Step 2: Use Lit Network to obtain a session sig and
-							then store an encryption condition.
-						</s>
-						(Session Sigs do not work currently.)
+						Step 3: Use Lit Network to obtain a session sig and then
+						store an encryption condition.
 					</h3>
 					<button
 						onClick={() =>
@@ -261,7 +258,7 @@ const handleMintPkpUsingGoogleAuth = async (
 
 async function handleExecuteJs(
 	setStatusFn: (status: string) => void,
-	authSig: JsonAuthSig,
+	authSig: AuthSig,
 	pkpPublicKey: string
 ): Promise<string> {
 	setStatusFn("Executing JS...");
@@ -420,40 +417,39 @@ async function handleStoreEncryptionCondition(
 	];
 
 	// this will be fired if auth is needed. we can use this to prompt the user to sign in
-	const authNeededCallback = async ({
+	const authNeededCallback: AuthCallback = async ({
 		chain,
 		resources,
 		expiration,
 		uri,
-		litNodeClient,
-	}: any) => {
+	}) => {
 		console.log("authNeededCallback fired");
+
+		// Generate authMethod.
 		const authMethods =
 			selectedAuthMethod === 6
 				? [
-						{
-							authMethodType: 6,
-							accessToken: googleCredentialResponse.credential,
-						},
+						litNodeClient.generateAuthMethodForGoogleJWT(
+							googleCredentialResponse.credential
+						),
 				  ]
 				: [
-						{
-							authMethodType: 3,
-							accessToken: JSON.stringify(
-								webAuthnVerificationMaterial
-							),
-						},
+						(function() {
+							throw new Error("Unsupported auth method selected");
+						})(),
 				  ];
-		const sessionSig = await litNodeClient.signSessionKey({
+
+		// Get AuthSig
+		const { authSig } = await litNodeClient.signSessionKey({
 			sessionKey: uri,
 			authMethods,
-			pkpPublicKey,
-			expiration,
+			expiration:
+				expiration ||
+				new Date(Date.now() + 1000 * 60 * 60 * 24).toISOString(), // 24 hours
 			resources,
-			chain,
 		});
-		console.log("got session sig from node and PKP: ", sessionSig);
-		return sessionSig;
+		console.log("got session sig from node and PKP: ", authSig);
+		return authSig;
 	};
 
 	// get the user a session with it
@@ -729,7 +725,7 @@ const rpcUrl = process.env.REACT_APP_RPC_URL || "http://localhost:8545";
 async function handleWebAuthnAuthenticate(
 	setStatusFn: (status: string) => void
 ): Promise<{
-	authSig: JsonAuthSig;
+	authSig: AuthSig;
 	pkpPublicKey: string;
 }> {
 	// Fetch latest blockHash

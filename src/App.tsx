@@ -10,9 +10,11 @@ import {
 } from "@simplewebauthn/browser";
 import base64url from "base64url";
 import { ethers, utils } from "ethers";
+import { computeAddress } from "ethers/lib/utils";
 import { useState } from "react";
 import "./App.css";
 import { getDomainFromOrigin } from "./utils/string";
+import { Base64 } from "js-base64";
 
 type CredentialResponse = any;
 
@@ -36,6 +38,10 @@ function App() {
 	const [registeredPkpPublicKey, setRegisteredPkpPublicKey] = useState<
 		string
 	>("");
+	const [
+		authenticatedPkpEthAddress,
+		setAuthenticatedPkpEthAddress,
+	] = useState<string>("");
 	const [authenticatedPkpPublicKey, setAuthenticatedPkpPublicKey] = useState<
 		string
 	>("");
@@ -46,6 +52,9 @@ function App() {
 	const [executeJsSignature, setExecuteJsSignature] = useState<string | null>(
 		null
 	);
+	const [authenticatedSessionSigs, setAuthenticatedSessionSigs] = useState<
+		any
+	>(null);
 
 	const handleLoggedInToGoogle = async (
 		credentialResponse: CredentialResponse
@@ -122,22 +131,51 @@ function App() {
 						</div>
 					)}
 					<h3>
-						Step 3: Use Lit Network to obtain a session sig and then
-						store an encryption condition.
+						Step 3: Authenticate against Lit Nodes to generate auth
+						sigs.
+					</h3>
+					<Button
+						variant="contained"
+						onClick={async () => {
+							const {
+								authSig,
+								pkpPublicKey,
+								sessionSigs,
+							} = await handleGoogleJWTAuthenticate(
+								googleCredentialResponse
+							);
+							setAuthSig(authSig);
+							setAuthenticatedPkpPublicKey(pkpPublicKey);
+							setAuthenticatedPkpEthAddress(
+								computeAddress(`0x${pkpPublicKey}`)
+							);
+							setAuthenticatedSessionSigs(sessionSigs);
+						}}
+					>
+						Authenticate
+					</Button>
+					{authenticatedPkpEthAddress && authenticatedPkpPublicKey && (
+						<>
+							<div>
+								Authenticated PKP Eth Address:{" "}
+								{authenticatedPkpEthAddress}
+							</div>
+							<div>
+								Authenticated PKP Public Key:{" "}
+								{authenticatedPkpPublicKey}
+							</div>
+						</>
+					)}
+					<h3>
+						Step 4: Use Lit Network to store an encryption
+						condition.
 					</h3>
 					<button
 						onClick={() =>
 							handleStoreEncryptionCondition(
 								setStatus,
-								selectedAuthMethod,
-								googleCredentialResponse,
-								{
-									signature: "dummy",
-									signatureBase: "dummy",
-									credentialPublicKey: "dummy",
-								},
-								registeredPkpEthAddress,
-								registeredPkpPublicKey
+								authenticatedSessionSigs,
+								authenticatedPkpEthAddress
 							)
 						}
 					>
@@ -190,6 +228,9 @@ function App() {
 							// After authenticating, we can store the pkpPublicKey for executing a
 							// Lit Action later.
 							setAuthenticatedPkpPublicKey(pkpPublicKey);
+							setAuthenticatedPkpEthAddress(
+								computeAddress(`0x${pkpPublicKey}`)
+							);
 						}}
 					>
 						Authenticate
@@ -390,15 +431,8 @@ async function pollRequestUntilTerminalState(
 
 async function handleStoreEncryptionCondition(
 	setStatusFn: (status: string) => void,
-	selectedAuthMethod: number,
-	googleCredentialResponse: any,
-	webAuthnVerificationMaterial: {
-		signature: string;
-		signatureBase: string;
-		credentialPublicKey: string;
-	},
-	pkpEthAddress: string,
-	pkpPublicKey: string
+	sessionSigs: any,
+	pkpEthAddress: string
 ) {
 	setStatusFn("Storing encryption condition...");
 	var unifiedAccessControlConditions: AccsDefaultParams[] = [
@@ -416,56 +450,11 @@ async function handleStoreEncryptionCondition(
 		},
 	];
 
-	// this will be fired if auth is needed. we can use this to prompt the user to sign in
-	const authNeededCallback: AuthCallback = async ({
-		chain,
-		resources,
-		expiration,
-		uri,
-	}) => {
-		console.log("authNeededCallback fired");
-
-		// Generate authMethod.
-		const authMethods =
-			selectedAuthMethod === 6
-				? [
-						litNodeClient.generateAuthMethodForGoogleJWT(
-							googleCredentialResponse.credential
-						),
-				  ]
-				: [
-						(function() {
-							throw new Error("Unsupported auth method selected");
-						})(),
-				  ];
-
-		// Get AuthSig
-		const { authSig } = await litNodeClient.signSessionKey({
-			sessionKey: uri,
-			authMethods,
-			expiration:
-				expiration ||
-				new Date(Date.now() + 1000 * 60 * 60 * 24).toISOString(), // 24 hours
-			resources,
-		});
-		console.log("got session sig from node and PKP: ", authSig);
-		return authSig;
-	};
-
 	// get the user a session with it
 	const litNodeClient = new LitJsSdk.LitNodeClient({
 		litNetwork: "serrano",
 	});
 	await litNodeClient.connect();
-
-	const sessionSigs = await litNodeClient.getSessionSigs({
-		expiration: new Date(Date.now() + 1000 * 60 * 60 * 24).toISOString(), // 24 hours
-		chain: "ethereum",
-		resources: [`litEncryptionCondition://*`],
-		switchChain: false,
-		authNeededCallback,
-	});
-	console.log("sessionSigs before saving encryption key: ", sessionSigs);
 
 	const { encryptedZip, symmetricKey } = await LitJsSdk.zipAndEncryptString(
 		"this is a secret message"
@@ -721,6 +710,71 @@ async function handleWebAuthnRegister(
 }
 
 const rpcUrl = process.env.REACT_APP_RPC_URL || "http://localhost:8545";
+
+async function handleGoogleJWTAuthenticate(
+	googleCredentialResponse: any
+): Promise<{
+	authSig: AuthSig;
+	pkpPublicKey: string;
+	sessionSigs: any;
+}> {
+	let responseAuthSig: AuthSig;
+	let responsePkpPublicKey: string;
+
+	// this will be fired if auth is needed. we can use this to prompt the user to sign in
+	const authNeededCallback: AuthCallback = async ({
+		chain,
+		resources,
+		expiration,
+		uri,
+	}) => {
+		console.log("authNeededCallback fired");
+
+		// Generate authMethod.
+		const authMethods = [
+			litNodeClient.generateAuthMethodForGoogleJWT(
+				googleCredentialResponse.credential
+			),
+		];
+
+		// Get AuthSig
+		const { authSig, pkpPublicKey } = await litNodeClient.signSessionKey({
+			sessionKey: uri,
+			authMethods,
+			expiration:
+				expiration ||
+				new Date(Date.now() + 1000 * 60 * 60 * 24).toISOString(), // 24 hours
+			resources,
+		});
+		console.log("got session sig from node and PKP: ", authSig);
+
+		responseAuthSig = authSig;
+		responsePkpPublicKey = pkpPublicKey;
+
+		return authSig;
+	};
+
+	// get the user a session with it
+	const litNodeClient = new LitJsSdk.LitNodeClient({
+		litNetwork: "serrano",
+	});
+	await litNodeClient.connect();
+
+	const sessionSigs = await litNodeClient.getSessionSigs({
+		expiration: new Date(Date.now() + 1000 * 60 * 60 * 24).toISOString(), // 24 hours
+		chain: "ethereum",
+		resources: [`${Base64.encode(JSON.stringify({ def: ["*"] }))}`],
+		switchChain: false,
+		authNeededCallback,
+	});
+	console.log("sessionSigs before saving encryption key: ", sessionSigs);
+
+	return {
+		authSig: responseAuthSig!,
+		pkpPublicKey: responsePkpPublicKey!,
+		sessionSigs: sessionSigs,
+	};
+}
 
 async function handleWebAuthnAuthenticate(
 	setStatusFn: (status: string) => void

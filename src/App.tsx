@@ -55,18 +55,6 @@ function App() {
 			credentialResponse,
 		});
 		setGoogleCredentialResponse(credentialResponse);
-		const requestId = await mintPkpUsingRelayerGoogleAuthVerificationEndpoint(
-			credentialResponse,
-			setStatus
-		);
-		await pollRequestUntilTerminalState(
-			requestId,
-			setStatus,
-			({ pkpEthAddress, pkpPublicKey }) => {
-				setRegisteredPkpEthAddress(pkpEthAddress);
-				setRegisteredPkpPublicKey(pkpPublicKey);
-			}
-		);
 	};
 
 	return (
@@ -98,10 +86,7 @@ function App() {
 			<div style={{ height: 24 }} />
 			{selectedAuthMethod === 6 && (
 				<>
-					<h3>
-						Step 1: Log in with Google. Upon OAuth success, we will
-						mint a PKP on your behalf.
-					</h3>
+					<h3>Step 1: Log in with Google.</h3>
 					<GoogleLogin
 						onSuccess={handleLoggedInToGoogle}
 						onError={() => {
@@ -109,6 +94,27 @@ function App() {
 						}}
 						useOneTap
 					/>
+					{googleCredentialResponse && (
+						<div>
+							<b>Google Credential Response: </b>
+							{JSON.stringify(googleCredentialResponse)}
+						</div>
+					)}
+					<h3>Step 2: Use Google Credential to Mint PKP.</h3>
+					<button
+						onClick={() =>
+							handleMintPkpUsingGoogleAuth(
+								googleCredentialResponse,
+								setStatus,
+								({ pkpEthAddress, pkpPublicKey }) => {
+									setRegisteredPkpEthAddress(pkpEthAddress);
+									setRegisteredPkpPublicKey(pkpPublicKey);
+								}
+							)
+						}
+					>
+						Mint PKP
+					</button>
 					{registeredPkpEthAddress && (
 						<div>
 							Registered PKP Eth Address:{" "}
@@ -233,6 +239,25 @@ function App() {
 }
 
 export default App;
+
+const handleMintPkpUsingGoogleAuth = async (
+	credentialResponse: CredentialResponse,
+	setStatusFn: (status: string) => void,
+	onSuccess: ({
+		pkpEthAddress,
+		pkpPublicKey,
+	}: {
+		pkpEthAddress: string;
+		pkpPublicKey: string;
+	}) => void
+) => {
+	setStatusFn("Minting PKP...");
+	const requestId = await mintPkpUsingRelayerGoogleAuthVerificationEndpoint(
+		credentialResponse,
+		setStatusFn
+	);
+	return pollRequestUntilTerminalState(requestId, setStatusFn, onSuccess);
+};
 
 async function handleExecuteJs(
 	setStatusFn: (status: string) => void,

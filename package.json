@@ -32,15 +32,16 @@
 	},
 	"devDependencies": {
 		"prettier": "^1.18.2",
+		"react-app-rewired": "^2.2.1",
 		"tslint": "^5.19.0",
 		"tslint-config-prettier": "^1.18.0",
 		"typescript": "3.6.2"
 	},
 	"scripts": {
-		"start": "react-scripts start",
-		"build": "yarn fetchContracts && react-scripts build",
-		"test": "react-scripts test",
-		"eject": "react-scripts eject",
+		"start": "react-app-rewired start",
+		"build": "yarn fetchContracts && react-app-rewired build",
+		"test": "react-app-rewired test",
+		"eject": "react-app-rewired eject",
 		"fetchContracts": "node ./tools/getDeployedContracts.mjs"
 	},
 	"eslintConfig": {

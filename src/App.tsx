@@ -1,5 +1,6 @@
 import * as LitJsSdk_accessControlConditions from "@lit-protocol/access-control-conditions";
 import * as LitJsSdk_blsSdk from "@lit-protocol/bls-sdk";
+import * as LitJsSdk_authHelpers from "@lit-protocol/auth-helpers";
 import * as LitJsSdk from "@lit-protocol/lit-node-client";
 import { AccsDefaultParams, AuthSig, AuthCallback } from "@lit-protocol/types";
 import { Button, ButtonGroup, TextField } from "@mui/material";
@@ -131,56 +132,21 @@ function App() {
 						</div>
 					)}
 					<h3>
-						Step 3: Authenticate against Lit Nodes to generate auth
-						sigs.
+						Step 3: Generate auth sigs from Lit Nodes, then generate
+						session sigs for storing an encryption condition.
 					</h3>
 					<Button
 						variant="contained"
 						onClick={async () => {
-							const {
-								authSig,
-								pkpPublicKey,
-								sessionSigs,
-							} = await handleGoogleJWTAuthenticate(
-								googleCredentialResponse
+							await handleStoreEncryptionConditionNodes(
+								setStatus,
+								googleCredentialResponse,
+								authenticatedPkpEthAddress
 							);
-							setAuthSig(authSig);
-							setAuthenticatedPkpPublicKey(pkpPublicKey);
-							setAuthenticatedPkpEthAddress(
-								computeAddress(`0x${pkpPublicKey}`)
-							);
-							setAuthenticatedSessionSigs(sessionSigs);
 						}}
 					>
-						Authenticate
+						Authenticate + Encrypt with Lit
 					</Button>
-					{authenticatedPkpEthAddress && authenticatedPkpPublicKey && (
-						<>
-							<div>
-								Authenticated PKP Eth Address:{" "}
-								{authenticatedPkpEthAddress}
-							</div>
-							<div>
-								Authenticated PKP Public Key:{" "}
-								{authenticatedPkpPublicKey}
-							</div>
-						</>
-					)}
-					<h3>
-						Step 4: Use Lit Network to store an encryption
-						condition.
-					</h3>
-					<button
-						onClick={() =>
-							handleStoreEncryptionCondition(
-								setStatus,
-								authenticatedSessionSigs,
-								authenticatedPkpEthAddress
-							)
-						}
-					>
-						Encrypt with Lit
-					</button>
 				</>
 			)}
 			{selectedAuthMethod === 3 && (
@@ -429,9 +395,110 @@ async function pollRequestUntilTerminalState(
 	setStatusFn(`Hmm this is taking longer than expected...`);
 }
 
-async function handleStoreEncryptionCondition(
+async function handleStoreEncryptionConditionNodes(
 	setStatusFn: (status: string) => void,
-	sessionSigs: any,
+	googleCredentialResponse: any,
+	pkpEthAddress: string
+) {
+	setStatusFn("Storing encryption condition with the network...");
+	var unifiedAccessControlConditions: AccsDefaultParams[] = [
+		{
+			conditionType: "evmBasic",
+			contractAddress: "",
+			standardContractType: "",
+			chain: "mumbai",
+			method: "",
+			parameters: [":userAddress"],
+			returnValueTest: {
+				comparator: "=",
+				value: pkpEthAddress,
+			},
+		},
+	];
+
+	// get the user a session with it
+	const litNodeClient = new LitJsSdk.LitNodeClient({
+		litNetwork: "serrano",
+	});
+	await litNodeClient.connect();
+
+	const { encryptedString, symmetricKey } = await LitJsSdk.encryptString(
+		"this is a secret message"
+	);
+
+	// key parameter - encrypt symmetric key then hash it
+	const encryptedSymmetricKey = LitJsSdk_blsSdk.wasmBlsSdkHelpers.encrypt(
+		LitJsSdk.uint8arrayFromString(litNodeClient.subnetPubKey, "base16"),
+		symmetricKey
+	);
+	const hashedEncryptedSymmetricKeyStr = await hashBytes({
+		bytes: new Uint8Array(encryptedSymmetricKey),
+	});
+
+	// this will be fired if auth is needed. we can use this to prompt the user to sign in
+	const authNeededCallback: AuthCallback = async ({
+		resources,
+		expiration,
+	}) => {
+		console.log("authNeededCallback fired");
+
+		// Generate authMethod.
+		const authMethods = [
+			litNodeClient.generateAuthMethodForGoogleJWT(
+				googleCredentialResponse.credential
+			),
+		];
+
+		// Get AuthSig
+		const { authSig } = await litNodeClient.signSessionKey({
+			authMethods,
+			expiration:
+				expiration ||
+				new Date(Date.now() + 1000 * 60 * 60 * 24).toISOString(), // 24 hours
+			resources: resources || [],
+		});
+		console.log("got session sig from node and PKP: ", authSig);
+
+		return authSig;
+	};
+
+	// Construct the LitResource
+	const litResource = new LitJsSdk_authHelpers.LitAccessControlConditionResource(
+		hashedEncryptedSymmetricKeyStr
+	);
+
+	// Get the session sigs
+	const sessionSigs = await litNodeClient.getSessionSigs({
+		expiration: new Date(Date.now() + 1000 * 60 * 60 * 24).toISOString(), // 24 hours
+		chain: "ethereum",
+		resourceAbilityRequests: [
+			{
+				resource: litResource,
+				ability:
+					LitJsSdk_authHelpers.LitAbility
+						.AccessControlConditionDecryption,
+			},
+		],
+		switchChain: false,
+		authNeededCallback,
+	});
+	console.log("sessionSigs before saving encryption key: ", sessionSigs);
+
+	// store the decryption conditions
+	await litNodeClient.saveEncryptionKey({
+		unifiedAccessControlConditions,
+		symmetricKey,
+		encryptedSymmetricKey,
+		sessionSigs,
+		chain: "ethereum",
+	});
+
+	console.log("encryptedSymmetricKey: ", encryptedSymmetricKey);
+}
+
+// TODO: use when system migrates to reading from chain for access control conditions
+async function handleStoreEncryptionConditionRelay(
+	setStatusFn: (status: string) => void,
 	pkpEthAddress: string
 ) {
 	setStatusFn("Storing encryption condition...");
@@ -496,7 +563,6 @@ async function handleStoreEncryptionCondition(
 		hashedEncryptedSymmetricKeyStr,
 		hashedAccessControlConditionsStr,
 		securityHashStr,
-		sessionSig: sessionSigs["https://serrano.litgateway.com:7370"],
 	});
 
 	// call centralized conditions relayer to write encryption conditions to chain.
@@ -513,8 +579,6 @@ async function handleStoreEncryptionCondition(
 			chainId: "1",
 			permanent: false,
 			capabilityProtocolPrefix: "litEncryptionCondition",
-			// just choose any one session signature that is generated.
-			sessionSig: sessionSigs["https://serrano.litgateway.com:7370"],
 		}),
 	});
 
@@ -710,71 +774,6 @@ async function handleWebAuthnRegister(
 }
 
 const rpcUrl = process.env.REACT_APP_RPC_URL || "http://localhost:8545";
-
-async function handleGoogleJWTAuthenticate(
-	googleCredentialResponse: any
-): Promise<{
-	authSig: AuthSig;
-	pkpPublicKey: string;
-	sessionSigs: any;
-}> {
-	let responseAuthSig: AuthSig;
-	let responsePkpPublicKey: string;
-
-	// this will be fired if auth is needed. we can use this to prompt the user to sign in
-	const authNeededCallback: AuthCallback = async ({
-		chain,
-		resources,
-		expiration,
-		uri,
-	}) => {
-		console.log("authNeededCallback fired");
-
-		// Generate authMethod.
-		const authMethods = [
-			litNodeClient.generateAuthMethodForGoogleJWT(
-				googleCredentialResponse.credential
-			),
-		];
-
-		// Get AuthSig
-		const { authSig, pkpPublicKey } = await litNodeClient.signSessionKey({
-			sessionKey: uri,
-			authMethods,
-			expiration:
-				expiration ||
-				new Date(Date.now() + 1000 * 60 * 60 * 24).toISOString(), // 24 hours
-			resources,
-		});
-		console.log("got session sig from node and PKP: ", authSig);
-
-		responseAuthSig = authSig;
-		responsePkpPublicKey = pkpPublicKey;
-
-		return authSig;
-	};
-
-	// get the user a session with it
-	const litNodeClient = new LitJsSdk.LitNodeClient({
-		litNetwork: "serrano",
-	});
-	await litNodeClient.connect();
-
-	const sessionSigs = await litNodeClient.getSessionSigs({
-		expiration: new Date(Date.now() + 1000 * 60 * 60 * 24).toISOString(), // 24 hours
-		chain: "ethereum",
-		resources: [`${Base64.encode(JSON.stringify({ def: ["*"] }))}`],
-		switchChain: false,
-		authNeededCallback,
-	});
-	console.log("sessionSigs before saving encryption key: ", sessionSigs);
-
-	return {
-		authSig: responseAuthSig!,
-		pkpPublicKey: responsePkpPublicKey!,
-		sessionSigs: sessionSigs,
-	};
-}
 
 async function handleWebAuthnAuthenticate(
 	setStatusFn: (status: string) => void

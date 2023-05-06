@@ -1,6 +1,7 @@
 import * as LitJsSdk_accessControlConditions from "@lit-protocol/access-control-conditions";
 import * as LitJsSdk_blsSdk from "@lit-protocol/bls-sdk";
 import * as LitJsSdk_authHelpers from "@lit-protocol/auth-helpers";
+import * as LitJsSdk_types from "@lit-protocol/types";
 import * as LitJsSdk from "@lit-protocol/lit-node-client";
 import { AccsDefaultParams, AuthSig, AuthCallback } from "@lit-protocol/types";
 import { Button, ButtonGroup, TextField } from "@mui/material";
@@ -15,7 +16,6 @@ import { computeAddress } from "ethers/lib/utils";
 import { useState } from "react";
 import "./App.css";
 import { getDomainFromOrigin } from "./utils/string";
-import { Base64 } from "js-base64";
 
 type CredentialResponse = any;
 
@@ -53,9 +53,15 @@ function App() {
 	const [executeJsSignature, setExecuteJsSignature] = useState<string | null>(
 		null
 	);
-	const [authenticatedSessionSigs, setAuthenticatedSessionSigs] = useState<
-		any
-	>(null);
+	const [encryptedSymmetricKey, setEncryptedSymmetricKey] = useState<
+		Uint8Array
+	>(new Uint8Array());
+	const [encryptedString, setEncryptedString] = useState<Blob | null>(null);
+
+	console.log("STATE", {
+		authenticatedPkpPublicKey,
+		authenticatedPkpEthAddress,
+	});
 
 	const handleLoggedInToGoogle = async (
 		credentialResponse: CredentialResponse
@@ -138,14 +144,49 @@ function App() {
 					<Button
 						variant="contained"
 						onClick={async () => {
-							await handleStoreEncryptionConditionNodes(
+							const {
+								encryptedString,
+								encryptedSymmetricKey,
+								authenticatedPkpPublicKey,
+							} = await handleStoreEncryptionConditionNodes(
 								setStatus,
+								googleCredentialResponse
+							);
+							setEncryptedString(encryptedString);
+							setEncryptedSymmetricKey(encryptedSymmetricKey);
+							setAuthenticatedPkpPublicKey(
+								authenticatedPkpPublicKey
+							);
+							setAuthenticatedPkpEthAddress(
+								publicKeyToAddress(authenticatedPkpPublicKey)
+							);
+						}}
+					>
+						Authenticate + Encrypt with Lit
+					</Button>
+					{authenticatedPkpEthAddress && (
+						<div>
+							Authenticated PKP Eth Address:{" "}
+							{authenticatedPkpEthAddress}
+						</div>
+					)}
+					<h3>
+						Step 4: Retrieve the decrypted symmetric key from Lit
+						Nodes.
+					</h3>
+					<Button
+						variant="contained"
+						onClick={async () => {
+							await handleRetrieveSymmetricKeyNodes(
+								setStatus,
+								encryptedSymmetricKey,
+								encryptedString!,
 								googleCredentialResponse,
 								authenticatedPkpEthAddress
 							);
 						}}
 					>
-						Authenticate + Encrypt with Lit
+						Decrypt
 					</Button>
 				</>
 			)}
@@ -263,6 +304,15 @@ const handleMintPkpUsingGoogleAuth = async (
 	return pollRequestUntilTerminalState(requestId, setStatusFn, onSuccess);
 };
 
+async function getLitNodeClient(): Promise<LitJsSdk.LitNodeClient> {
+	const litNodeClient = new LitJsSdk.LitNodeClient({
+		litNetwork: "serrano",
+	});
+	await litNodeClient.connect();
+
+	return litNodeClient;
+}
+
 async function handleExecuteJs(
 	setStatusFn: (status: string) => void,
 	authSig: AuthSig,
@@ -280,10 +330,7 @@ const go = async () => {
 
 go();
 `;
-	const litNodeClient = new LitJsSdk.LitNodeClient({
-		litNetwork: "serrano",
-	});
-	await litNodeClient.connect();
+	const litNodeClient = await getLitNodeClient();
 
 	const results = await litNodeClient.executeJs({
 		code: litActionCode,
@@ -397,30 +444,16 @@ async function pollRequestUntilTerminalState(
 
 async function handleStoreEncryptionConditionNodes(
 	setStatusFn: (status: string) => void,
-	googleCredentialResponse: any,
-	pkpEthAddress: string
-) {
+	googleCredentialResponse: any
+): Promise<{
+	encryptedSymmetricKey: Uint8Array;
+	encryptedString: Blob;
+	authenticatedPkpPublicKey: string;
+}> {
 	setStatusFn("Storing encryption condition with the network...");
-	var unifiedAccessControlConditions: AccsDefaultParams[] = [
-		{
-			conditionType: "evmBasic",
-			contractAddress: "",
-			standardContractType: "",
-			chain: "mumbai",
-			method: "",
-			parameters: [":userAddress"],
-			returnValueTest: {
-				comparator: "=",
-				value: pkpEthAddress,
-			},
-		},
-	];
 
 	// get the user a session with it
-	const litNodeClient = new LitJsSdk.LitNodeClient({
-		litNetwork: "serrano",
-	});
-	await litNodeClient.connect();
+	const litNodeClient = await getLitNodeClient();
 
 	const { encryptedString, symmetricKey } = await LitJsSdk.encryptString(
 		"this is a secret message"
@@ -431,36 +464,87 @@ async function handleStoreEncryptionConditionNodes(
 		LitJsSdk.uint8arrayFromString(litNodeClient.subnetPubKey, "base16"),
 		symmetricKey
 	);
-	const hashedEncryptedSymmetricKeyStr = await hashBytes({
-		bytes: new Uint8Array(encryptedSymmetricKey),
+
+	// get the session sigs
+	const { sessionSigs, authenticatedPkpPublicKey } = await getSessionSigs(
+		litNodeClient,
+		encryptedSymmetricKey,
+		litNodeClient.generateAuthMethodForGoogleJWT(
+			googleCredentialResponse.credential
+		)
+	);
+
+	const pkpEthAddress = publicKeyToAddress(authenticatedPkpPublicKey);
+
+	const unifiedAccessControlConditions = getUnifiedAccessControlConditions(
+		pkpEthAddress
+	);
+	console.log(
+		"unifiedAccessControlConditions: ",
+		unifiedAccessControlConditions
+	);
+
+	// store the decryption conditions
+	await litNodeClient.saveEncryptionKey({
+		unifiedAccessControlConditions,
+		symmetricKey,
+		encryptedSymmetricKey,
+		sessionSigs, // Not actually needed for storing encryption condition.
+		chain: "ethereum",
 	});
+
+	console.log("encryptedSymmetricKey: ", encryptedSymmetricKey);
+
+	return {
+		encryptedSymmetricKey,
+		encryptedString,
+		authenticatedPkpPublicKey,
+	};
+}
+
+async function getSessionSigs(
+	litNodeClient: LitJsSdk.LitNodeClient,
+	encryptedSymmetricKey: Uint8Array,
+	authMethod: LitJsSdk_types.AuthMethod
+): Promise<{
+	sessionSigs: LitJsSdk_types.SessionSigsMap;
+	authenticatedPkpPublicKey: string;
+}> {
+	let authenticatedPkpPublicKey: string;
 
 	// this will be fired if auth is needed. we can use this to prompt the user to sign in
 	const authNeededCallback: AuthCallback = async ({
 		resources,
 		expiration,
+		statement,
 	}) => {
 		console.log("authNeededCallback fired");
 
 		// Generate authMethod.
-		const authMethods = [
-			litNodeClient.generateAuthMethodForGoogleJWT(
-				googleCredentialResponse.credential
-			),
-		];
+		const authMethods = [authMethod];
 
 		// Get AuthSig
-		const { authSig } = await litNodeClient.signSessionKey({
+		const { authSig, pkpPublicKey } = await litNodeClient.signSessionKey({
 			authMethods,
+			statement,
 			expiration:
 				expiration ||
 				new Date(Date.now() + 1000 * 60 * 60 * 24).toISOString(), // 24 hours
 			resources: resources || [],
 		});
-		console.log("got session sig from node and PKP: ", authSig);
+		console.log("got session sig from node and PKP: ", {
+			authSig,
+			pkpPublicKey,
+		});
+
+		authenticatedPkpPublicKey = pkpPublicKey;
 
 		return authSig;
 	};
+
+	const hashedEncryptedSymmetricKeyStr = await hashBytes({
+		bytes: new Uint8Array(encryptedSymmetricKey),
+	});
 
 	// Construct the LitResource
 	const litResource = new LitJsSdk_authHelpers.LitAccessControlConditionResource(
@@ -482,18 +566,13 @@ async function handleStoreEncryptionConditionNodes(
 		switchChain: false,
 		authNeededCallback,
 	});
-	console.log("sessionSigs before saving encryption key: ", sessionSigs);
+	console.log("sessionSigs: ", sessionSigs);
+	console.log("authenticatedPkpPublicKey: ", authenticatedPkpPublicKey!);
 
-	// store the decryption conditions
-	await litNodeClient.saveEncryptionKey({
-		unifiedAccessControlConditions,
-		symmetricKey,
-		encryptedSymmetricKey,
+	return {
 		sessionSigs,
-		chain: "ethereum",
-	});
-
-	console.log("encryptedSymmetricKey: ", encryptedSymmetricKey);
+		authenticatedPkpPublicKey: authenticatedPkpPublicKey!,
+	};
 }
 
 // TODO: use when system migrates to reading from chain for access control conditions
@@ -502,29 +581,17 @@ async function handleStoreEncryptionConditionRelay(
 	pkpEthAddress: string
 ) {
 	setStatusFn("Storing encryption condition...");
-	var unifiedAccessControlConditions: AccsDefaultParams[] = [
-		{
-			conditionType: "evmBasic",
-			contractAddress: "",
-			standardContractType: "",
-			chain: "mumbai",
-			method: "",
-			parameters: [":userAddress"],
-			returnValueTest: {
-				comparator: "=",
-				value: pkpEthAddress,
-			},
-		},
-	];
 
 	// get the user a session with it
-	const litNodeClient = new LitJsSdk.LitNodeClient({
-		litNetwork: "serrano",
-	});
-	await litNodeClient.connect();
+	const litNodeClient = await getLitNodeClient();
 
 	const { encryptedZip, symmetricKey } = await LitJsSdk.zipAndEncryptString(
 		"this is a secret message"
+	);
+
+	// get the ACCs
+	const unifiedAccessControlConditions = getUnifiedAccessControlConditions(
+		pkpEthAddress
 	);
 
 	// value parameter - hash unified conditions
@@ -593,6 +660,51 @@ async function handleStoreEncryptionConditionRelay(
 	}
 }
 
+async function handleRetrieveSymmetricKeyNodes(
+	setStatusFn: (status: string) => void,
+	encryptedSymmetricKey: Uint8Array,
+	encryptedString: Blob,
+	googleCredentialResponse: any,
+	pkpEthAddress: string
+) {
+	setStatusFn("Retrieving symmetric key...");
+	const litNodeClient = await getLitNodeClient();
+
+	// get the session sigs
+	const { sessionSigs } = await getSessionSigs(
+		litNodeClient,
+		encryptedSymmetricKey,
+		litNodeClient.generateAuthMethodForGoogleJWT(
+			googleCredentialResponse.credential
+		)
+	);
+
+	// get the ACC
+	const unifiedAccessControlConditions = getUnifiedAccessControlConditions(
+		pkpEthAddress
+	);
+	console.log(
+		"unifiedAccessControlConditions: ",
+		unifiedAccessControlConditions
+	);
+
+	const retrievedSymmKey = await litNodeClient.getEncryptionKey({
+		unifiedAccessControlConditions,
+		toDecrypt: LitJsSdk.uint8arrayToString(encryptedSymmetricKey, "base16"),
+		sessionSigs,
+	});
+
+	const decryptedString = await LitJsSdk.decryptString(
+		encryptedString,
+		retrievedSymmKey
+	);
+	console.log("decrypted string", decryptedString);
+}
+
+function publicKeyToAddress(publicKey: string) {
+	return utils.computeAddress(`0x${publicKey}`);
+}
+
 async function hashBytes({ bytes }: { bytes: Uint8Array }): Promise<string> {
 	const hashOfBytes = await crypto.subtle.digest("SHA-256", bytes);
 	const hashOfBytesStr = LitJsSdk.uint8arrayToString(
@@ -651,10 +763,7 @@ async function hashBytes({ bytes }: { bytes: Uint8Array }): Promise<string> {
 // 	};
 
 // 	// get the user a session with it
-// 	const litNodeClient = new LitJsSdk.LitNodeClient({
-// 		litNetwork: "serrano",
-// 	});
-// 	await litNodeClient.connect();
+// const litNodeClient = await getLitNodeClient();
 
 // 	const sessionSigs = await litNodeClient.getSessionSigs({
 // 		expiration: new Date(Date.now() + 1000 * 60 * 60 * 24).toISOString(), // 24 hours
@@ -824,10 +933,7 @@ async function handleWebAuthnAuthenticate(
 
 	// Call all nodes POST /web/auth/webauthn to generate authSig.
 	setStatusFn("Verifying WebAuthn authentication against Lit Network...");
-	const litNodeClient = new LitJsSdk.LitNodeClient({
-		litNetwork: "serrano",
-	});
-	await litNodeClient.connect();
+	const litNodeClient = await getLitNodeClient();
 
 	// Generate authMethod.
 	const authMethod = litNodeClient.generateAuthMethodForWebAuthn(
@@ -842,4 +948,25 @@ async function handleWebAuthnAuthenticate(
 	});
 
 	return { authSig, pkpPublicKey };
+}
+
+function getUnifiedAccessControlConditions(
+	pkpEthAddress?: string
+): AccsDefaultParams[] {
+	return [
+		{
+			conditionType: "evmBasic",
+			contractAddress: "",
+			standardContractType: "",
+			chain: "mumbai",
+			method: "",
+			parameters: [":userAddress"],
+			returnValueTest: {
+				comparator: "=",
+				value:
+					pkpEthAddress ||
+					"0x3c3CA2BFFfffE532aed2923A34D6c1F9307F8076",
+			},
+		},
+	];
 }

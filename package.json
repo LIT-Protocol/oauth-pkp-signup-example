@@ -12,6 +12,7 @@
 		"@lit-protocol/crypto": "^2.1.122",
 		"@lit-protocol/lit-node-client": "^2.1.122",
 		"@lit-protocol/lit-node-client-nodejs": "^2.1.122",
+		"@lit-protocol/types": "^2.1.122",
 		"@mui/material": "^5.10.16",
 		"@react-oauth/google": "^0.4.0",
 		"@simplewebauthn/browser": "^6.2.2",

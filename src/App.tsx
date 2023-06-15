@@ -147,18 +147,18 @@ function App() {
 							const {
 								encryptedString,
 								encryptedSymmetricKey,
-								authenticatedPkpPublicKey,
 							} = await handleStoreEncryptionConditionNodes(
 								setStatus,
-								googleCredentialResponse
+								googleCredentialResponse,
+								registeredPkpPublicKey
 							);
 							setEncryptedString(encryptedString);
 							setEncryptedSymmetricKey(encryptedSymmetricKey);
 							setAuthenticatedPkpPublicKey(
-								authenticatedPkpPublicKey
+								registeredPkpPublicKey
 							);
 							setAuthenticatedPkpEthAddress(
-								publicKeyToAddress(authenticatedPkpPublicKey)
+								publicKeyToAddress(registeredPkpPublicKey)
 							);
 						}}
 					>
@@ -444,11 +444,11 @@ async function pollRequestUntilTerminalState(
 
 async function handleStoreEncryptionConditionNodes(
 	setStatusFn: (status: string) => void,
-	googleCredentialResponse: any
+	googleCredentialResponse: any,
+	requestedPkpPublicKey: string
 ): Promise<{
 	encryptedSymmetricKey: Uint8Array;
 	encryptedString: Blob;
-	authenticatedPkpPublicKey: string;
 }> {
 	setStatusFn("Storing encryption condition with the network...");
 
@@ -466,16 +466,17 @@ async function handleStoreEncryptionConditionNodes(
 	);
 
 	// get the session sigs
-	const { sessionSigs, authenticatedPkpPublicKey } = await getSessionSigs(
+	const { sessionSigs } = await getSessionSigs(
 		litNodeClient,
 		encryptedSymmetricKey,
 		litNodeClient.generateAuthMethodForGoogleJWT(
 			googleCredentialResponse.credential
-		)
+		),
+		requestedPkpPublicKey
 	);
-
-	const pkpEthAddress = publicKeyToAddress(authenticatedPkpPublicKey);
-
+	
+	const pkpEthAddress = publicKeyToAddress(requestedPkpPublicKey);
+	
 	const unifiedAccessControlConditions = getUnifiedAccessControlConditions(
 		pkpEthAddress
 	);
@@ -498,20 +499,17 @@ async function handleStoreEncryptionConditionNodes(
 	return {
 		encryptedSymmetricKey,
 		encryptedString,
-		authenticatedPkpPublicKey,
 	};
 }
 
 async function getSessionSigs(
 	litNodeClient: LitJsSdk.LitNodeClient,
 	encryptedSymmetricKey: Uint8Array,
-	authMethod: LitJsSdk_types.AuthMethod
+	authMethod: LitJsSdk_types.AuthMethod,
+	requestedPkpPublicKey: string
 ): Promise<{
 	sessionSigs: LitJsSdk_types.SessionSigsMap;
-	authenticatedPkpPublicKey: string;
 }> {
-	let authenticatedPkpPublicKey: string;
-
 	// this will be fired if auth is needed. we can use this to prompt the user to sign in
 	const authNeededCallback: AuthCallback = async ({
 		resources,
@@ -525,6 +523,7 @@ async function getSessionSigs(
 
 		// Get AuthSig
 		const { authSig, pkpPublicKey } = await litNodeClient.signSessionKey({
+			pkpPublicKey: requestedPkpPublicKey, 
 			authMethods,
 			statement,
 			expiration:
@@ -536,8 +535,6 @@ async function getSessionSigs(
 			authSig,
 			pkpPublicKey,
 		});
-
-		authenticatedPkpPublicKey = pkpPublicKey;
 
 		return authSig;
 	};
@@ -567,11 +564,9 @@ async function getSessionSigs(
 		authNeededCallback,
 	});
 	console.log("sessionSigs: ", sessionSigs);
-	console.log("authenticatedPkpPublicKey: ", authenticatedPkpPublicKey!);
 
 	return {
-		sessionSigs,
-		authenticatedPkpPublicKey: authenticatedPkpPublicKey!,
+		sessionSigs
 	};
 }
 
@@ -676,7 +671,8 @@ async function handleRetrieveSymmetricKeyNodes(
 		encryptedSymmetricKey,
 		litNodeClient.generateAuthMethodForGoogleJWT(
 			googleCredentialResponse.credential
-		)
+		),
+		
 	);
 
 	// get the ACC
@@ -702,7 +698,7 @@ async function handleRetrieveSymmetricKeyNodes(
 }
 
 function publicKeyToAddress(publicKey: string) {
-	return utils.computeAddress(`0x${publicKey}`);
+	return utils.computeAddress(`${publicKey}`);
 }
 
 async function hashBytes({ bytes }: { bytes: Uint8Array }): Promise<string> {

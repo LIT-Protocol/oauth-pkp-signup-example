@@ -1,3 +1,6 @@
+# ⚠️ ⚠️ ⚠️ DEPRECATED - Uses Lit JS SDK V2 (on the network `serrano`) ⚠️ ⚠️ ⚠️
+If you want to check out an example using OAuth that will be updated to using the [Lit JS SDK V3](https://developer.litprotocol.com/v3/sdk/installation) (on the `cayenne` network), go to this [example](https://github.com/LIT-Protocol/lit-pkp-auth-demo).
+
 # Lit Protocol Oauth -> Wallet example
 
 This project lets you start using Ethereum with just a Google Account. It's a simple example of how to use the Lit Protocol Oauth service to authenticate users and then use their Ethereum address.
